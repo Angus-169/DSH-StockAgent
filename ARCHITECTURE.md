@@ -1,6 +1,7 @@
 # ARCHITECTURE.md — DSH Stock Lab 系统架构设计
 
 > 版本 v0.1 · 2026-10-23 · 状态：初稿（Task 1 源码评审后可能微调复用层）
+> 2026-10-27 更新：§15 决策表状态按代码核实（D10–D13 改为"已实施"、新增 D18/D19），§9.3/§9.4 归档 D18/D19。
 > 核心原则：**UI 和 LLM 都不得直接访问具体行情 API；一切数据经 MarketService；不 fork DSH Core。**
 
 ---
@@ -222,6 +223,10 @@ MarketOverview {
 
 ## 5. AI Tools 设计（MVP 8 个，稳定优先）
 
+> **实现现状（2026-10-27）**：当前共 **30 个工具**（`src/tools/` 六个模块注册：index 9 + research 4 +
+> watch 5 + quant 3 + formula 6 + drawing 3；清单见 ROADMAP T6.2 与插件 README）。
+> 下表是 MVP 的 8 个核心工具，**仍在用**；但本节的"追加"清单不等于已支持——见下表后的现状注记。
+
 | Tool | 输入 | 输出要点 |
 |---|---|---|
 | `stock_quote` | symbol | Quote |
@@ -234,6 +239,12 @@ MarketOverview {
 | **`stock_research_snapshot`** | symbol | 标准化快照（见第 6 节） |
 
 Phase 3+ 追加：`stock_money_flow / compare_stocks / market_breadth / screen_stocks / run_event_study / run_regression / run_backtest / save_research_note / create_watch_rule`。
+
+> **其中仍未实现（2026-10-27 实测）**：`compare_stocks` / `market_breadth` / `screen_stocks`
+> ——选股属 ROADMAP **T5.7 ⬜**（信号提取接口已就绪，全市场批量求值未做）；
+> `run_regression` / `run_backtest` ——回归与回测属 🧊 **范围冻结**（保留可用、不再扩展的是 Event Study）。
+> **已实现**：`stock_money_flow`、`run_event_study`、`save_research_note`、`create_watch_rule`，
+> 以及后续加入的公式（6）、画线（3）、盯盘（5）、笔记（4）类工具，合计 30（见本节开头的实现现状）。
 
 ---
 
@@ -290,15 +301,19 @@ Client store 维护当前状态，每次 Agent 调用前由 `stock-context` prov
 - 回答结构：事实 → 异常 → 可能原因 → 证据 → 反证 → 未确认 → 建议验证。**相关性不得表述为因果**（原则 6）。
 - 随插件发布 `stock-lab` skill：合规红线（不构成投资建议）、方法论、工具路由规则、盯盘与提醒的正确用法。
 
-### 实测边界：插件源码里零 LLM 调用
+### 实测边界：统计与判定全部由代码算（LLM 只做解释）
 
-对 `src/**` 与 `backend/**` 做 grep（`ctx.llm` / `get('llm')` / `llm.stream` / `agentDefaultModel`）的结果是 **0 处**。也就是说：
+对 `src/**` 与 `backend/**` 做 grep（`ctx.llm` / `get('llm')` / `llm.stream` / `agentDefaultModel`）：
+**设计期（Phase 1）实测 0 处**；但自 **Phase 6 自建 Chat** 起，插件代码已经直接调用 LLM
+（`src/index.js:136` `llm: ctx.get?.('llm')`、`:139`/`:359` `ctx.get?.('agentDefaultModel')`；
+`src/services/chat-service/index.js:214` `stream: (options) => this.llm.stream(options)`——见 §12 与 D10）。
+也就是说，下面这张表的边界仍然成立：**数值与判定归代码，语言归 LLM**。
 
 | 层 | 由谁决定 | 是否可复现 |
 |---|---|---|
 | 取数与归一化（含多源 fallback、GBK 解码、字段校准） | **代码 100%** | ✅ |
 | 全部数值统计（区间收益、年化波动、量能 z-score、超额收益、相关系数、t 统计量） | **代码 100%** | ✅ |
-| 异常判定（6 类规则） | **代码 100%** | ✅ |
+| 异常判定（**5 类**规则：量能 / 相对强度 / 价格动量 / 波动 / 行业背离，见 `src/tools/index.js:385/392/399/406/414`） | **代码 100%** | ✅ |
 | 盯盘条件（9 种）与冷却逻辑 | **代码 100%** | ✅ |
 | 事件研究与显著性判断 | **代码 100%** | ✅ |
 | 存储、指纹、台账 CRUD 与复盘统计 | **代码 100%** | ✅ |
@@ -308,7 +323,7 @@ Client store 维护当前状态，每次 Agent 调用前由 `stock-context` prov
 
 **设计含义**：LLM 是"说话的人"，不是"算数的人"。所以任何结论如果重要，其**事实骨架必须能追到代码产出的数值**（`provenance` / `metrics` / `anomalies` 都是为此存在的）。
 
-**未来风险与约束**：§12 的自建 Chat 会**首次**让插件代码直接调用 LLM。因此必须遵守：
+**自建 Chat 的约束（已实施，规则仍适用）**：§12 的自建 Chat（Phase 6 已完成，见 D10）让插件代码直接调用 LLM。因此必须遵守：
 
 1. 聊天得到的数字**只能来自工具返回**，不得由模型心算（system prompt 明确禁止）
 2. 工具结果里已有的统计量，聊天回复不得改写
@@ -334,7 +349,8 @@ Client store 维护当前状态，每次 Agent 调用前由 `stock-context` prov
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-（「量化验证」tab 暂停，见 §13 范围冻结）
+（底部另有「量化验证」tab：**保留可用但不再扩展**，见 §13 范围冻结与 D13；上图底部未列出它——
+实际 tabs 见 `src/client.js:3544`）
 
 ### 9.1 主题词汇表（实测，2026-10-25）
 
@@ -472,7 +488,8 @@ adjust:  'qfq' | 'hfq' | 'none'                    // 画线时的复权模式�
 三条设计要点：
 
 1. **吸附必须有**：手画的线永远对不准 K 线高低点。锚点先吸到最近的 K 线，
-   再把价格吸到那根的**高/低/收**里最近的一个。
+   再把价格吸到那根的**开/高/低/收**里最近的一个（`snapAnchor`；曾经漏掉 `open`，
+   表现为"一根 K 线只能吸 3 个点"）。
 2. **画线模式才接管指针**：没选工具时保持原有逐根十字读数，不拦截；
    选了工具才进入画线态（十字光标 + 禁止选中文本）。
 3. **比例尺只有一处计算**（`computePriceScale`）：图表与交互层共用。
@@ -681,7 +698,7 @@ updater 何时执行由 React 决定，写进去会导致"栈非空却提示没�
 - `GenerateOptions` 支持 `messages`、`system`、**`tools: ToolSchema[]`**、`temperature`、`maxTokens`、`signal`
 - `ctx.get('agentDefaultModel').currentSelection()` 给出 provider/model → **不需要插件自配 API Key**
 
-所以自建对话框是可行的，并且有一个原方案没有的好处：**我们已有的 21 个工具就在本进程内，聊天可以直接调用它们的 `execute`，不需要经过 agent 层**。详见 §12。
+所以自建对话框是可行的，并且有一个原方案没有的好处：**我们已有的 30 个工具就在本进程内，聊天可以直接调用它们的 `execute`，不需要经过 agent 层**。详见 §12。
 
 ---
 
@@ -715,7 +732,7 @@ updater 何时执行由 React 决定，写进去会导致"栈非空却提示没�
 ```
 system     = skill.md 的合规与方法论 + 当前标的事实底座（snapshot 摘要）
 messages   = [线程摘要] + [最近 N 轮原始消息] + [本次提问]
-tools      = 本插件的 21 个工具 schema
+tools      = 本插件自有的 30 个工具 schema（`src/tools/` 六个模块注册，见 ROADMAP T6.2）
 ```
 
 **多轮工具循环**：收到 `tool-call-delta` → 拼参数 → 调本进程的工具 `execute` → 把结果作为 tool message 回灌 → 继续流式，最多 K 轮（防止无限循环），每轮都可取消。
@@ -751,7 +768,7 @@ tools      = 本插件的 21 个工具 schema
 DSH 真实会话（cwd = 工作区目录）   ← 持久、工作区里（重启后）可见
         ↕
 右栏（只显示当前标的）             ← 只是这份会话的一个视图
-插件的 llm 工具循环                ← 负责"生成"（带 27 工具白名单 + 研究硬约束）
+插件的 llm 工具循环                ← 负责"生成"（带 30 工具白名单 + 研究硬约束）
 ```
 
 - **一层：右栏即时问答**（已实现）——插件自己的线程 + 自己的 llm 循环，轻、快、按标的自动切
@@ -791,16 +808,26 @@ DSH 真实会话（cwd = 工作区目录）   ← 持久、工作区里（重启
 | 支持 | 说明 |
 |---|---|
 | 语句 | `A:=EXPR;`（中间变量）、`A:EXPR;`（输出线）、`A:EXPR,COLORRED;`（带绘图属性，属性先解析并保留） |
-| 序列变量 | `O H L C V VOL AMOUNT`、常量、算术/比较/逻辑运算 |
-| 常用函数 | `MA EMA SMA REF HHV LLV SUM STD CROSS COUNT EVERY EXIST IF MAX MIN ABS BARSCOUNT BARSLAST REFDATE` |
+| 序列变量 | `O H L C V VOL AMOUNT`（**7 个名字 / 6 个序列**；`V` 与 `VOL` 同指成交量）、常量、算术/比较/逻辑运算 |
+| 常用函数 | **设计期清单**：`MA EMA SMA REF HHV LLV SUM STD CROSS COUNT EVERY EXIST IF MAX MIN ABS BARSCOUNT BARSLAST`
+（⚠️ 此处曾把**未来函数 `REFDATE`** 混进"支持"清单，已删除——见下"实现现状"） |
 | 周期 | 日/周/月（由 K 线 timeframe 决定，公式本身不含周期） |
 
 | 不支持（明确报错，不静默近似） | 原因 |
 |---|---|
 | 加密公式文件（`.tne` 等二进制） | 加密格式无法解析——**必须如实告知，不能猜** |
 | 引用其它公式（`"MACD.MA1"`） | 需要跨公式解析；先提示用户展开 |
-| `ZIG PEAK TROUGH BACKSET` 等**未来函数** | 会重画历史、使回测与信号失效 → **检测到就警告并标注**，不阻止（用户可能只是想看图） |
-| `DRAWTEXT DRAWICON DRAWLINE POLYLINE` | 绘图指令，MVP 忽略并在结果里列出"已忽略的指令" |
+| `ZIG PEAK PEAKBARS TROUGH TROUGHBARS BACKSET REFDATE`（**未来函数，7 个**） | 会重画历史、使回测与信号失效 → 识别并在结果里标注，且 **`run()` 默认拒绝计算**，只有显式 `allowFutureFunctions=true` 才出图（**本节旧文写"不阻止"，与实现不符，2026-10-27 已更正**） |
+| `FINANCE FINANCE_EX DYNAINFO CAPITAL SELFDATA HYBLOCK INBLOCK`（**依赖数据，7 个**） | ⚠️ **它们不是未来函数**（不会重画历史）。真正限制是引擎只提供 K 线序列、拿不到财务与实时盘口 → 报"缺数据"，**不能把原因说成"会重画历史"** |
+| `COST WINNER LWINNER PPART PWINNER`（**明确未实现，5 个**） | 只靠 K 线理论上可算，属实现缺口 → 报"尚未实现" |
+| `DRAWTEXT DRAWICON DRAWLINE POLYLINE` 等（**绘图指令，18 个**） | MVP 忽略并在结果里列出"已忽略的指令"（输出线数值照算） |
+
+> **实现现状（2026-10-27 按代码核实，覆盖上表的"设计期/MVP"口径）**：
+> **29 个可计算函数**（`supportedFunctionNames().length === 29`）+ **7 个序列变量名**（`O/H/L/C/V/VOL/AMOUNT`；其中 `V` 与 `VOL` 同指成交量，共 **6 个序列**）。
+> 注册表 `FUNCTIONS`（Map）共 58 个键 = **29 个函数 × 2**（大写名 + 小写别名，函数名大小写不敏感）——**不是"58 个函数"**；
+> 上表四类"不能用"的名字（未来函数 7 / 依赖数据 7 / 未实现 5 / 绘图指令 18）**不在**这张表里，各在独立集合。
+> 四类的处置分支在 `tdx-evaluate.js:146-182`，**分开报原因**——把"缺数据"说成"未来函数"会让用户找错方向（真实修过的分类错误）。
+> 逐项进度见 `ROADMAP.md` 的 T5.2 / T5.3，边界表述见插件 README「明确不支持」一节。
 
 ### 为什么用 Node 而不是 Python 实现
 
@@ -874,8 +901,8 @@ DSH 真实会话（cwd = 工作区目录）   ← 持久、工作区里（重启
 | D2 | 以 `dsh-astock` 为**设计参考**，最终自建 `dsh-stock-lab` | ✅ 已定（源码评审后：其交易/回测逻辑不作为主线，仅借鉴 K 线组件与数据源经验） |
 | D3 | Python 从 Phase 2 引入（存储 + 计算），行情与 UI 纯 Node | ✅ 已定 |
 | D4 | 存储 Parquet 优先、无 pyarrow 时回退 csv.gz，接口层抽象保留迁移能力 | ✅ 已定（实测：环境无 pyarrow，当前走 csv.gz） |
-| D6 | `stock_research_snapshot` 的 anomalies 由代码计算 | ✅ 已定（现有 6 类规则） |
-| D7 | 所有数值统计由代码计算，**插件代码零 LLM 调用** | ✅ 已定（实测 grep = 0 处） |
+| D6 | `stock_research_snapshot` 的 anomalies 由代码计算 | ✅ 已定（**实现为 5 类**规则，见 §8 与 `src/tools/index.js`；设计期曾按 6 类描述） |
+| D7 | 所有数值统计由代码计算，**统计与判定路径不调用 LLM** | ✅ 已定（Phase 1 实测 grep = 0 处；**Phase 6 起 `chat-service` 经 `ctx.llm.stream` 调 LLM 只用于"说话"**，数值仍全部来自工具，见 §8 / D10） |
 | D8 | 本地库读写两方共用 `src/data-root.js` 的唯一根目录定义 | ✅ 已定（曾因两方不一致出现「写 A 读 B」） |
 | D9 | 插件无法向会话推送 → 主动提醒 = 插件产出待看清单 + DSH 调度器叫起 | ✅ 已定（架构边界，已写入 skill.md） |
 
@@ -885,15 +912,17 @@ DSH 真实会话（cwd = 工作区目录）   ← 持久、工作区里（重启
 |---|---|---|---|
 | **D5** | ~~AI Chat 复用/嵌入 DSH 会话，不自造对话框~~ | **自建右栏 Chat**（`ctx.llm` + 本插件工具直调），官方会话保持可用且互补 | 原方案技术上不可行：`main` 只有 `conversation` 键绑定 Session，我们的页面拿不到 Session，也无法 import 官方 Chat 组件；强占 `conversation` 键等于重写官方会话。详见 §9/§12 |
 
-**新增（待用户确认后实施）**
+**新增（自 2026-10-25 起实施；状态于 2026-10-27 按代码逐条核实）**
 
 | # | 决策 | 状态 |
 |---|---|---|
-| D10 | 右栏 Chat 采自建方案：`ctx.llm.stream` + 多轮工具循环，最多 K 轮，工具直接调用本进程 `execute` | **待确认** |
-| D11 | 对话以**标的为单位**分线程；线程存原始消息（供人回看），结论存 Research Note；上下文 = 线程摘要 + 最近 N 轮 | **待确认** |
-| D12 | 通达信公式按**兼容子集**实现（Node 纯函数），不支持项明确报错；**未来函数检测并警告** | **待确认** |
-| D13 | **量化研究暂停**：Event Study 与 Quant UI 保留可用但不再扩展；不做回归/回测/walk-forward | **待确认** |
+| D10 | 右栏 Chat 采自建方案：`ctx.llm.stream` + 多轮工具循环，最多 K 轮，工具直接调用本进程 `execute` | ✅ 已实施（`src/services/chat-service/llm-loop.js` + `index.js`；工具白名单只含本插件自有工具，见 §12） |
+| D11 | 对话以**标的为单位**分线程；线程存原始消息（供人回看），结论存 Research Note；上下文 = 线程摘要 + 最近 N 轮 | ✅ 已实施（**分线程与原始消息**：`chat-store.js` 的 `findThread` / `summary` / `summarizedUpTo` 字段；**"摘要 + 最近 N 轮"的上下文装配仍未实施**——即 ROADMAP 的 T7.2 ⬜，字段只是预留） |
+| D12 | 通达信公式按**兼容子集**实现（Node 纯函数），不支持项明确报错；**未来函数检测并警告** | ✅ 已实施（`src/services/formula-service/`；能力边界见 §13） |
+| D13 | **量化研究暂停**：Event Study 与 Quant UI 保留可用但不再扩展；不做回归/回测/walk-forward | ✅ 已实施（量化：**保留可用、不再扩展**；`run_event_study` 与「量化验证」tab 仍在） |
 | **D14** | **右栏宽度由用户拖拽决定**（不固定）：显示器与 DSH 窗口尺寸差异太大，固定宽度在窄窗口挤掉图表、在超宽屏浪费空间 | ✅ 已实施 |
+| **D18** | **K 线交互与历史深度**：缓冲区 `BARS_BUFFER=800` + 可视窗口 `{count, end}`（`end < 0` = "跟随最新"哨兵）；指标在缓冲区上算、按窗口切片；`CHART_GEO` 共用几何；滚轮以指针所在那根为锚；↑↓ 缩放 / ←→ 平移 / PageUp·PageDown 半屏 / Home·End；点某根 K 线钉住读数；未选工具时拖动 = 按横向范围框选放大；到数据起点明确提示 | ✅ 已实施（设计、三条"必须做对的"与上游历史深度实测见 **§9.3**；实现 `src/client.js`） |
+| **D19** | **图表画线**：`hline / trend / circle / marker` 四种工具；锚点 x 锚日期、y 锚价格并记录画线时的 `adjust`（不一致时虚线 + 提示）；吸附到最近一根 K 线的 开/高/低/收；颜色存色名（拒绝色值）；幽灵提示 + 预览线；Ctrl+Z 撤销；框选多选与 Delete 批量删除；选中后可写 label 与 reason；测幅不落库；存 `数据根目录/drawings/<标的>.json`；AI 可画（`save_drawing` / `list_drawings` / `delete_drawing`） | ✅ 已实施（设计与踩坑记录见 **§9.4 – §9.19**；实现 `src/services/drawing-service/drawing-store.js`、`src/tools/drawing-tools.js`、`src/client.js`） |
 
 **范围冻结（依据用户"加进去的东西有点多"的反馈）**
 

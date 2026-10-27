@@ -14,34 +14,42 @@
 - 能否转化成可验证的研究假设？
 - 未来能否自动跟踪并复盘？
 
-## 当前进度（Phase 1 · Stock Terminal MVP）
+## 当前进度（Phase 1–7）
 
 | 模块 | 状态 |
 |---|---|
 | MarketService（统一数据入口） | ✅ 已实现 + 真实数据验证 |
-| symbol 规范化（沪/深/北/指数/ETF） | ✅ 19 项单测 |
+| symbol 规范化（沪/深/北/指数/ETF） | ✅ 15 项单测（normalize 11 + parseFlags 3 + marketOf 1） |
 | 腾讯适配器（行情/K线/分时/搜索） | ✅ 真实接口验证 |
 | 新浪备源（日线 fallback） | ✅ 已接入 |
 | 东财适配器（宽度/资金流/财务/概况/新闻） | ✅ 真实接口验证 |
-| TTL 缓存 + single-flight | ✅ 4 项单测 |
-| AI Tools（8 个，含 research_snapshot） | ✅ 9 项单测 |
-| Host 入口 + HTTP 路由 | ✅ 16 项契约测试 |
+| TTL 缓存 + single-flight | ✅ 4 项单测（与上面 15 项同属 `market-service.test.mjs`，**本套共 19 项**） |
+| AI Tools | ✅ **30 个**（行情 9 / 研究 4 / 量化 3 / 盯盘 5 / 通达信 6 / 图表标注 3），`tools.test` 11 项 |
+| Host 入口 + HTTP 路由 | ✅ **56 条**路由；`host.test` 23 项契约与架构铁律测试 |
 | StockContext（UI 状态 → LLM） | ✅ 已实现 |
 | stock-lab skill（合规 + 方法论） | ✅ 已实现 |
-| Client UI 工作台 | ✅ 已实现并在 DSH GUI 验证 |
+| Client UI 工作台 | ✅ 已实现并在 DSH GUI 验证，且经用户多轮实测反馈迭代（2026-10-25 ~ 10-27） |
 | K线组件（手写 SVG） | ✅ 已实现（日/周/月 × 复权 × 缩放，无第三方库） |
 | 安装到 profile | ✅ `application: applied` |
 | **Research Notebook（研究笔记台账）** | ✅ SQLite + markdown，端到端验证 |
 | **研究笔记 UI** | ✅ 新建/列表/内联复盘 |
 | **行业板块维度** | ✅ 板块列表/行情/成分股/个股归属 |
-| **历史数据落库** | ✅ Python + csv.gz（可切 Parquet），实测 5 标的 × 500 根 |
+| **历史数据落库** | ✅ Python + csv.gz（可切 Parquet），实测 5 标的（约 300–500 根/标的，现 2,104 行） |
 | **Quant Engine：Event Study** | ✅ 5 种内置条件，含显著性检验，端到端实测 |
 | **Quant UI** | ✅ 条件/参数选择 + 结果显著性展示 + 一键存笔记 |
 | **Watch Engine（智能盯盘）** | ✅ 9 种条件 + 触发记录 + 冷却 + 周期评估 + 与笔记联动 |
 | Watch UI | ✅ 规则管理 + 立即评估 + 触发列表 + 确认 |
-| **通达信公式引擎** | ✅ 解析/求值/未来函数检测/导入通道（40+ 函数），主页面展示待做 |
+| **通达信公式引擎** | ✅ 解析/求值/未来函数检测/导入通道（**29 个可计算函数 + 7 个序列变量名**，后者对应 **6 个序列**，`V` 与 `VOL` 同指成交量）+ **主图叠加/副图/「指标公式」tab**；**选股（T5.7）待做** |
+| **K 线交互（D18）** | ✅ 缓冲区 800 根 + 可视窗口模型：缩放/平移/滚轮以指针为锚/翻页/点 K 线钉住读数/框选放大 |
+| **图表画线（D19）** | ✅ 水平线/趋势线/圆/标记 + 吸附 + Ctrl+Z 撤销 + 测幅；**AI 可画**（3 个工具） |
+| **右栏 Chat** | ✅ 数据层 + LLM 工具循环 + 右栏 UI（打真实 LLM 冒烟通过）；二层真实会话（T6.5）待做 |
+| **侧栏显示名** | ✅ 「看盘助手」（内部标识 `dsh-stock-lab` / `stock-lab` 不变，见下） |
 | 事件时间线 | ⏸ 推迟 |
 | 回归 / 回测 | 🧊 冻结（量化不再扩展） |
+
+> **显示名与内部标识是两件事**：用户看到的名字是**「看盘助手」**（`src/client.js` 的 slot label）；
+> 而内部标识 `dsh-stock-lab`（包名）与 `stock-lab`（路由前缀 / localStorage 键 / 数据目录）**保持不变**——
+> 改它们会波及路由、持久化键与已有数据目录。
 
 ## 架构铁律（已被测试强制）
 
@@ -145,30 +153,38 @@
 | 语句 | `A:=EXPR;`（中间变量）· `A:EXPR;`（输出线）· `A:EXPR,COLORRED,LINETHICK2;`（绘图属性） |
 | 容错 | 末行漏分号、整篇按行写不带分号、`{ }` 与 `//` 注释、**中文变量名**、字符串字面量 `'底'`、大小写不敏感 |
 | 函数 | `MA EMA SMA REF HHV LLV SUM STD CROSS COUNT EVERY EXIST IF IFF BARSLAST BARSSINCE BARSCOUNT MAX MIN ABS SQRT POW LOG EXP SIGN ROUND INTPART CEILING FLOOR` |
-| 序列 | `O H L C V VOL AMOUNT`（及英文全称） |
+| 序列 | `O H L C V VOL AMOUNT`（**7 个名字 → 6 个序列**：`V` 与 `VOL` 同指成交量）+ 英文全称与别名（`OPEN HIGH LOW CLOSE VOLUME AMO`，共 13 个名字） |
 
 ### 明确不支持（会报错，不猜）
 
-**三类"不能用"分开报**——原因不同，出路也不同，不能混为一谈：
+**"不能用"的名字分开报（原因不同，出路也不同）**——四类共 37 个名字，处置由代码分支决定（`tdx-evaluate.js:146-182`）：
 
-| 类别 | 函数 | 为什么不行 | 出路 |
-|---|---|---|---|
-| **未来函数** | `ZIG PEAK PEAKBARS TROUGH TROUGHBARS BACKSET REFDATE` | 会随新数据**重画历史**，拿去判断信号会得到虚假高胜率 | 只想看图时用 `run_formula` + `allowFutureFunctions=true` |
-| **缺数据** | `FINANCE DYNAINFO CAPITAL SELFDATA HYBLOCK INBLOCK` | ⚠️ **这不是未来函数**——它们不会重画历史。真正限制是引擎只提供 K 线序列，拿不到财务与实时盘口 | 基本面筛选请先用 `stock_financials` / `stock_quote` 取数值再筛 |
-| **未实现** | `COST WINNER LWINNER` | 只靠 K 线理论上可算，属实现缺口 | 待实现 |
+| 类别 | 数量 | 函数 | 为什么不行 | 出路 |
+|---|---|---|---|---|
+| **未来函数** | 7 | `ZIG PEAK PEAKBARS TROUGH TROUGHBARS BACKSET REFDATE` | 会随新数据**重画历史**，拿去判断信号会得到虚假高胜率 | 只想看图时用 `run_formula` + `allowFutureFunctions=true` |
+| **缺数据** | 7 | `FINANCE FINANCE_EX DYNAINFO CAPITAL SELFDATA HYBLOCK INBLOCK` | ⚠️ **这不是未来函数**——它们不会重画历史。真正限制是引擎只提供 K 线序列，拿不到财务与实时盘口 | 基本面筛选请先用 `stock_financials` / `stock_quote` 取数值再筛；`CAPITAL` 类可用本地库/行情侧数据代替 |
+| **未实现** | 5 | `COST WINNER LWINNER PPART PWINNER` | 只靠 K 线理论上可算，属实现缺口 | 待实现 |
+| **绘图指令**（会被忽略） | 18 | `DRAWTEXT DRAWICON DRAWNUMBER DRAWLINE DRAWKLINE STICKLINE POLYLINE PARTLINE DRAWBAND DRAWRECTREL VERTLINE HORLINE DRAWGBK`（13 个）+ `_FIX` 变体 5 个（`DRAWTEXT_FIX` / `DRAWICON_FIX` / `DRAWNUMBER_FIX` / `DRAWLINE_FIX` / `DRAWRECTREL_FIX`） | 数值照算，但文字/图标/画线不显示 | 不需要出路：**结果里会列出被忽略了哪些**，不假装画出来了 |
+
+> 上述四类都**不计入**"已实现函数"数量：可计算的只有 **29 个函数 + 7 个序列变量名**（`supportedFunctionNames()` 实返回 29）。
+> ⚠️ 注意口径：`O H L C V VOL AMOUNT` 是 **7 个名字、6 个序列**——`V` 与 `VOL` 同指成交量（`tdx-evaluate.js:18-25` 的 `SERIES_VARS` 共 13 个名字，映射到 6 个序列）。说"7 个序列"就是错的。
+> 注册表 `FUNCTIONS`（Map）共 58 个键，但那是 **29 个函数 × 2**（大写名 + 小写别名，函数名大小写不敏感）——**不是**"58 个函数"；
+> 上表四类"不能用"的名字（共 37 个）**不在**这张表里，各在独立集合。所以"支持 40+"这类数字是把函数、行情序列、以及不能用的名字混着数的结果。
 
 | 项 | 原因 / 出路 |
 |---|---|
 | 加密公式文件（`.tne` 等二进制） | 格式无法还原。**请在通达信「公式管理器」里复制源码或导出 .txt** |
 | 跨公式引用（`"MACD.MA1"`） | 需跨公式解析；请把被引用的公式展开 |
-| 绘图指令（`DRAWTEXT DRAWICON DRAWLINE STICKLINE POLYLINE` 等） | 会被忽略：数值照算，但文字/图标/画线不显示。**结果里会列出被忽略了哪些** |
 | 口径未确认的平滑函数（`MEMA WMA DMA EXPMA`） | 宁可报"不支持"，也不给一个近似值 |
 
 > 早期版本把 `FINANCE`/`DYNAINFO` 误归为「未来函数」，于是"我们没有财务数据"被说成"你的公式会重画历史"——**指向了错误的原因**。现已按上表分开，并有测试锁住这个区分。
 
 ### 未来函数检测（这个必须做）
 
-通达信里 `ZIG / PEAK / TROUGH / BACKSET / REFDATE / DYNAINFO / FINANCE` 等会在新数据到来时**重画历史**。用它们判断买卖信号会得到虚假的高胜率。
+通达信里 `ZIG / PEAK / PEAKBARS / TROUGH / TROUGHBARS / BACKSET / REFDATE` 这 **7 个**会在新数据到来时**重画历史**。用它们判断买卖信号会得到虚假的高胜率。
+
+> ⚠️ **不要把 `DYNAINFO` / `FINANCE` 归到这一类**：它们不会重画历史，只是引擎拿不到财务/实时盘口数据（属上表"缺数据"）。
+> 这两者混为一谈会让用户找错方向——这是本项目真实修过的分类错误，也有测试锁着（见上表下的说明）。
 
 因此：`analyze()` 标出函数名并提示；`run()` **默认拒绝计算**，只有显式允许（`allowFutureFunctions`）才出图。
 
@@ -251,7 +267,7 @@ MACD标准      → 3 条输出线，DIF=12.61 / DEA=5.13 / MACD=14.95，来源=
 
 **但插件可以自己调 LLM**：`ctx.llm.stream()` 支持 `tools` 与 `tool-call-delta`，
 用 `agentDefaultModel` 当前选型，**不需要 API Key**。于是自建，而且有个官方会话没有的好处：
-**27 个工具就在本进程内，可以直接调 `execute`**，不必经过 agent 层。
+**30 个工具就在本进程内，可以直接调 `execute`**，不必经过 agent 层。
 
 ### 三条刻意的设计约束
 
@@ -725,17 +741,17 @@ DSH 的字体设置一起变，配色跟随明暗主题：
 ```bash
 # Node 侧
 node tests/market-service.test.mjs   # 19 项，纯离线
-node tests/tools.test.mjs            # 10 项，纯离线（假 market）
-node tests/host.test.mjs             # 18 项，契约 + 架构铁律
-node tests/client.test.mjs           # 20 项，bundle 契约 + 渲染 + 无硬编码色
+node tests/tools.test.mjs            # 11 项，纯离线（假 market）
+node tests/host.test.mjs             # 23 项，契约 + 架构铁律
+node tests/client.test.mjs           # 310 项，bundle 契约 + 渲染 + 无硬编码色
 node tests/research.test.mjs         # 18 项，研究笔记存储层
-node tests/research-tools.test.mjs   # 11 项，研究类 AI Tools
-node tests/quant-bridge.test.mjs     #  7 项，Node→Python 桥（路径 + 错误处理 + 真实执行）
+node tests/research-tools.test.mjs   # 14 项，研究类 AI Tools
+node tests/quant-bridge.test.mjs     #  7 项（Python 不可用时自动跳过 3 项 → 4 项）
 node tests/watch.test.mjs            # 39 项，盯盘条件求值 + 规则存储 + 冷却 + digest
-node tests/local-storage.test.mjs    # 20 项，本地库读写 + 跨语言契约（Python 写→Node 读）
-node tests/tdx.test.mjs              # 52 项，TDX 解析/求值语义/诊断/未来函数
+node tests/local-storage.test.mjs    # 21 项（Python 不可用时跳过 2 项 → 19 项）
+node tests/tdx.test.mjs              # 61 项，TDX 解析/求值语义/诊断/未来函数
 node tests/formula-store.test.mjs    # 42 项，公式库 + 公式工具 + lossless-JSON 校验
-node tests/drawing-store.test.mjs    # 24 项，画线持久化（锚点/复权/损坏文件都不静默）
+node tests/drawing-store.test.mjs    # 30 项，画线持久化（锚点/复权/损坏文件都不静默）
 node tests/chat-store.test.mjs        # 32 项，对话数据层（线程/消息/摘要/懒创建）
 node tests/chat-service.test.mjs      # 30 项，ChatService（白名单/系统提示词/落库/懒创建）
 node tests/chat-persistence.test.mjs  # 16 项，跨重启匹配（"两周后还能接上吗"）
@@ -752,7 +768,12 @@ python backend/tests/test_storage.py       # 10 项，存储层
 python backend/tests/test_event_study.py   #  9 项，事件研究
 ```
 
-合计 **JS 715 项 + Python 19 项 = 734 项自动化测试** + 5 套真实冒烟（网络 ×2、真实 K 线 ×1、真实 LLM ×2）。
+合计 **JS 717 项 + Python 19 项 = 736 项自动化测试**（2026-10-27 实跑复核），另有 5 套真实冒烟（网络 ×2、真实 K 线 ×1、真实 LLM ×2）**不并入计数**。
+
+> ⚠️ **同一个"717"是环境相关的，不是恒定值**：`quant-bridge`（3 项）与 `local-storage`（2 项）里有 5 个断言需要真的启动 Python 解释器，
+> 探测不到时会**自动跳过并在输出里写明**，总数随之变成 **712**（16 套 = 699 + 资源校验 13）。
+> 实测两次跑出不同数字就是因为这个：一次在受限沙箱下（Python 在 `~/.dsh/dsh-runtimes` 下、工作区外，被拒绝执行）得 712，
+> 放开后得 736。所以**报数字时必须带上前提**；复跑请从插件目录执行（`cd dsh-stock-lab` 再 `node tests/xxx.mjs`）。
 
 > **测试不得留垃圾**：临时目录清理统一走 `tests/cleanup.mjs`（重试 + **失败要出声**）。
 > 不能写成 `try { rmSync(dir) } catch { }`——Windows 上只要还有 SQLite 连接没关，
@@ -771,6 +792,14 @@ python backend/collectors/collector.py fetch-many SH600519 SZ300750 IDX000300 --
 python backend/collectors/collector.py status
 python backend/collectors/collector.py version SH600519 IDX300      # 数据版本指纹
 ```
+
+> ⚠️ **命令行要显式指定数据根目录**（实测踩到的）：Python 侧 `storage.py` 的 `_home()` 只按
+> `DSH_STOCK_LAB_DATA` → `DSH_STOCK_LAB_HOME/data` → `$DSH_HOME/stock-lab/data` → `~/.dsh/stock-lab/data` 找，
+> **没有"包内 `data/`"这一档**；而 Node 侧 `resolveDataRoot()` 有。
+> 于是开发期数据落在包内 `data/` 时，裸跑 `collector.py status` 会显示"尚无落库数据"（库其实在包内），
+> 而**运行期不会**有这个问题——quant-bridge 会把 Node 解析出的目录作为 `DSH_STOCK_LAB_DATA` 传给子进程。
+> 命令行请带上环境变量：`DSH_STOCK_LAB_DATA="<包根>/data" python backend/collectors/collector.py status`。
+> 这个不对称本身是两处逻辑未真正统一的残留（Node 多一档候选），已记在此处而不是假装一致。
 
 存储布局：
 
@@ -855,11 +884,12 @@ data/                                  ← 根目录由 src/data-root.js 唯一�
 │ 上证 深证 创业板 沪深300 │ 成交额 │ 涨/跌 │ 情绪分      │
 ├──────────┬────────────────────────┬──────────────────┤
 │ 搜索      │   名称 价格 涨跌  ST/停牌 │  （右侧留给对话） │
-│ 自选股    │   日/周/月 · 复权 · 根数  │                  │
+│ 自选股    │   日/周/月 · 复权 · 缩放  │                  │
 │          │   SVG 蜡烛 + MA20 + 量    │                  │
 │          │   行情卡（开高低/额/换手/PE）│                 │
 ├──────────┴────────────────────────┴──────────────────┤
-│ 新闻 │ 财务 │ 资金流 │ 所属行业 │ 研究笔记              │
+│ 新闻 │ 财务 │ 资金流 │ 所属行业 │ 量化验证           │
+│ 智能盯盘 │ 研究笔记 │ 指标公式                       │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -867,6 +897,7 @@ data/                                  ← 根目录由 src/data-root.js 唯一�
 - **量化验证** tab：选事件条件与参数 → 运行 Event Study → 展示样本量/超额/胜率/t 值/显著性 + 免责声明 → 一键存为研究笔记
 - **智能盯盘** tab：新建规则（9 种条件，含「假设到复盘日」并可选关联笔记）· 立即评估 · 规则启停/删除 · 触发记录（严重度分级 + 依据数值 + 确认）· 记录设置规则的研究意图
 - **研究笔记** tab：统计条 + 新建表单 + 笔记列表 + 内联复盘（四档结论 + 复盘正文）
+- **指标公式** tab：公式列表（名字/归属标的/输出线/解析状态/告警）· 界面内粘贴导入 · 「画到图上」开关（跨会话记住）· 当前标的的计算结果摘要
 
 ## Research Notebook
 
@@ -897,9 +928,11 @@ AI Tools：
 
 - **顶部**：上证/深证/创业板/沪深300 实时指数、两市成交额、涨跌家数、情绪分（10s 刷新）
 - **左侧**：股票搜索（腾讯 smartbox）+ 自选股（可增删，localStorage 持久化）
-- **中央**：SVG 蜡烛图（阳空心红/阴实心绿）+ MA20 + 成交量副图 + 逐根十字读数；日/周/月 × 前/后/不复权 × 60–500 根
+- **中央**：SVG 蜡烛图（阳空心红/阴实心绿）+ MA20 + 成交量副图 + 逐根十字读数；日/周/月 × 前/后/不复权；
+  可视窗口模型（缓冲区 800 根）支持缩放 / 平移 / 翻页 / 滚轮（以指针为锚）；选中画线工具后可在图上叠加公式线与画线
 - **行情卡**：开高低收、成交额、换手、PE、数据时间与来源
-- **底部 tabs**：新闻 / 财务 / 资金流
+- **右栏**：AI 助手 = 当前标的的对话线程（SSE 逐字、工具调用折成一行摘要、可拖宽/可收起）
+- **底部 tabs**：新闻 / 财务 / 资金流 / 所属行业 / 量化验证 / 智能盯盘 / 研究笔记 / 指标公式
 
 UI 状态（当前股票、周期、区间、基准）自动上报，AI 对话时无需重复股票名。
 
@@ -919,7 +952,7 @@ UI 状态（当前股票、周期、区间、基准）自动上报，AI 对话�
 - `ctx.set()` 需要插件声明 `export const provide`，否则启动报 `cannot set property ... without provide`。不需跨插件共享时，直接用闭包持有实例。
 - **`ctx.tools` / `ctx.skills` 只有在 `inject` 里声明后才存在。** 只写 `inject: ['webServer']` 时 `apply` 里 `ctx.tools === undefined`，AI Tools 会静默注册失败——界面正常但 AI 完全用不了。现已加 `tools`、`skills` 并配回归测试。
 - 验证注册是否生效（不要只看 UI）：
-  - `cordis_inspect_query` → host `Tool.listTools`，应能看到 8 个 `stock_*`
+  - `cordis_inspect_query` → host `Tool.listTools`，应能看到全部 **30 个** `stock_*` / 其它本插件工具（少一个都说明注册装配出了问题）
   - 会话可用 skill 目录里应出现 `stock-lab`
   - 直接调一次 `stock_quote` 或 `stock_research_snapshot`
 - 改 Host 代码后必须 remove + install 重装才生效（`lib`/`src` 的 Host 半边不在 HMR 范围）；Client 半边（`src/client.js`）由 HMR 推送，刷新页面即可。
@@ -932,3 +965,8 @@ dsh plugin --profile <profile> add -w "D:\DeepSeek Harness\插件与Skills开发
 ```
 
 架构设计与阶段计划见上级目录的 `ARCHITECTURE.md` / `ROADMAP.md` / `PLUGIN_REVIEW.md`。
+
+**版本管理**：上级目录自 2026-10-27 起纳入 git（远端 `git@github.com:Angus-169/DSH-StockAgent.git`）。
+首次提交是**现状快照**——只含 4 份设计文档与本插件（`src` / `tests` / `backend` / 展示资源）；
+`research/` 第三方插件源码快照、`data/` 与 `.test-data/` 运行数据**不入库**（见上级目录 `.gitignore`）。
+改 Host 代码后仍需 remove + install 重装才生效；Client 半边由 HMR 推送，刷新页面即可。
