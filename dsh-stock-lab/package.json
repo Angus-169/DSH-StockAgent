@@ -1,0 +1,51 @@
+{
+  "name": "dsh-stock-lab",
+  "version": "0.0.1",
+  "description": "DSH Stock Lab — AI-first 中国A股智能研究工作台：行情终端 / AI研究助手 / 智能盯盘 / 量化验证 / 研究笔记。不构成投资建议。",
+  "type": "module",
+  "license": "MIT",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./src/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "icon": "icon.svg",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "files": [
+    "src",
+    "backend",
+    "tests",
+    "locale/*.json",
+    "cordis.patch.yml",
+    "skill.md",
+    "README.md",
+    "LICENSE",
+    "icon.svg"
+  ],
+  "scripts": {
+    "test": "node tests/market-service.test.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "a-share",
+    "stock-research",
+    "quant"
+  ]
+}

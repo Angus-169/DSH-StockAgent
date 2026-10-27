@@ -1,0 +1,10 @@
+# 本地数据与测试产物（运行时生成）
+data/
+.test-data/
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 可选：把 python 解释器路径写在这里（每行一个，支持 # 注释）
+# .python-path

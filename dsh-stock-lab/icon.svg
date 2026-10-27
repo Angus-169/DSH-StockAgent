@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-label="DSH Stock Lab">
+  <!-- 底板：浅蓝圆角方块 -->
+  <rect x="1" y="1" width="22" height="22" rx="5.5" fill="#4D6BFE" fill-opacity="0.12"/>
+  <rect x="1.75" y="1.75" width="20.5" height="20.5" rx="4.75" fill="none" stroke="#4D6BFE" stroke-opacity="0.45" stroke-width="1.5"/>
+
+  <!-- 三根上涨的柱（市值/走势），粗细保证 16px 下仍清晰 -->
+  <rect x="4.6" y="13.4" width="2.5" height="5.6" rx="0.9" fill="#4D6BFE" fill-opacity="0.55"/>
+  <rect x="9.0" y="10.2" width="2.5" height="8.8" rx="0.9" fill="#4D6BFE" fill-opacity="0.78"/>
+  <rect x="13.4" y="6.8" width="2.5" height="12.2" rx="0.9" fill="#4D6BFE"/>
+
+  <!-- 放大镜：压住右上角，表示"研究/追问为什么" -->
+  <circle cx="17.6" cy="8.2" r="3.9" fill="#FFFFFF" fill-opacity="0.92" stroke="#4D6BFE" stroke-width="1.7"/>
+  <path d="M20.5 11.1 L22.6 13.2" stroke="#4D6BFE" stroke-width="1.9" stroke-linecap="round"/>
+</svg>
