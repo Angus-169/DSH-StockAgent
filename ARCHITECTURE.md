@@ -218,6 +218,10 @@ MarketOverview {
 - **Parquet**：日线、分钟线、指数、板块、因子、技术指标 → `data/bars/` 等，按 `symbol/year` 分区。
 - **DuckDB（MVP 用 SQLite，接口层抽象保留迁移能力）**：股票基础信息、新闻、公告、事件、自选股、Watch 规则、回测元数据、AI 分析结果索引。
 - **Research Notes**：markdown 文件（人可读）+ SQLite 索引（可查询），每条 note 记录：`dataVersion, asOfDate, universe, benchmark, params` —— 满足可复现（原则 4/7）。
+- **数据根目录**：解析规则在 `src/data-root.js`（Node）与 `backend/storage/storage.py`（Python）是**两份实现、同一套规则**
+  （显式 env → `DSH_STOCK_LAB_HOME/data` → `$DSH_HOME/stock-lab/data` → `<包根>/data`；后两档按"**真的有 K 线文件**"挑选）。
+  两侧由跨语言契约测试逐字比对；运行期 quant-bridge 再显式传 `DSH_STOCK_LAB_DATA` 作为第二道保险。
+  **空库不算数据**——只读命令曾建出空库把真库顶掉，见 §9.20。
 
 ---
 
@@ -658,6 +662,28 @@ updater 何时执行由 React 决定，写进去会导致"栈非空却提示没�
 
 > 教训：测试只设 HOME 是不够的——**隔离不彻底时，测试会污染真实数据**，而且不报错。
 
+### 9.20 「有数据」的判据太弱，空库顶掉了真库（2026-10-28）
+
+§9.19 修的是"显式路径被误判"，这次是**隐式候选的判据本身太弱**。
+
+旧判据：`hasData(dir) = meta.db 存在 || bars/ 目录存在`。它有两个盲点：
+
+- **只读命令会建库**：`collector.py status` → `list_bars_meta()` → `connect_meta()` → `ensure_dirs()` + `CREATE TABLE`，
+  于是一次"看一眼"就在 `$DSH_HOME/stock-lab/data` 留下了 schema 建好、**0 行**的 `meta.db`；
+  `data_version()` / `load_bars()` 也会经 `bars_path()` 建目录。
+- **空目录/空库被判成有数据**：下一次解析时，这个空目录排在包内 `data/` 之前 → 被选中 →
+  真正的 5 个标的"消失"，连 `drawings/` 都跟着根目录走（**画线全部看不到**）。
+
+修法（三条一起，缺一不可）：
+
+1. 判据改为**有真实 K 线文件**：`bars/<symbol>/` 下至少一个 `*.csv.gz` / `*.parquet`（最多扫 200 个 symbol 目录，避免拖慢）；
+2. **只读路径不建目录**：`bars_path(create=False)` 默认不建，`list_bars_meta()` 在 `meta.db` 不存在时直接返回 `[]`；
+3. **Python 补齐包内兜底**：`_home()` 与 Node 的 `resolveDataRoot()` 完全同构（此前 Python 少一档，命令行与运行期分叉）。
+
+> 教训一：**"存在"不等于"有数据"**。凡是拿"文件/目录存在"当有效性判据的地方，都要问一句"空文件算吗"。
+> 教训二：**只读操作绝不能有写入副作用**。它制造的空库会反过来改变后续解析结果——不只是"多留个文件"。
+> 教训三：同一规则写在两种语言里，靠"看起来一样"不够——必须有**跨语言同构测试**（这次 JS 补 4 项、Python 补 6 项）。
+
 ### 右栏宽度：用户可调（决策 D14）
 
 固定宽度行不通：显示器宽度千差万别，DSH 窗口也未必最大化——固定 380px 在窄窗口里会把中间图表挤得没法看，在 2560px 宽屏上又浪费空间。
@@ -903,7 +929,7 @@ DSH 真实会话（cwd = 工作区目录）   ← 持久、工作区里（重启
 | D4 | 存储 Parquet 优先、无 pyarrow 时回退 csv.gz，接口层抽象保留迁移能力 | ✅ 已定（实测：环境无 pyarrow，当前走 csv.gz） |
 | D6 | `stock_research_snapshot` 的 anomalies 由代码计算 | ✅ 已定（**实现为 5 类**规则，见 §8 与 `src/tools/index.js`；设计期曾按 6 类描述） |
 | D7 | 所有数值统计由代码计算，**统计与判定路径不调用 LLM** | ✅ 已定（Phase 1 实测 grep = 0 处；**Phase 6 起 `chat-service` 经 `ctx.llm.stream` 调 LLM 只用于"说话"**，数值仍全部来自工具，见 §8 / D10） |
-| D8 | 本地库读写两方共用 `src/data-root.js` 的唯一根目录定义 | ✅ 已定（曾因两方不一致出现「写 A 读 B」） |
+| D8 | 本地库读写两方共用**同一套根目录规则**（`src/data-root.js` 与 `backend/storage/storage.py` 两份实现） | ✅ 已定（曾因两方不一致出现「写 A 读 B」；2026-10-28 补：Python `_home()` 与 Node 完全同构，"有数据"判据改为"有真实 K 线文件"——空库不再顶掉真库，见 §9.20） |
 | D9 | 插件无法向会话推送 → 主动提醒 = 插件产出待看清单 + DSH 调度器叫起 | ✅ 已定（架构边界，已写入 skill.md） |
 
 **修订**

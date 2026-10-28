@@ -348,7 +348,7 @@ DSH股票工作台/
     ├── src/
     │   ├── index.js            Host 入口：56 条路由 + 工具注册装配
     │   ├── client.js           Client bundle：工作台页面与全部 UI
-    │   ├── data-root.js        数据根目录的唯一定义（读写两方共用）
+    │   ├── data-root.js        数据根目录解析（Node 侧；与 Python storage.py._home() 同构）
     │   ├── datasource/         单一数据源适配器（只被 market-service 引用）
     │   │   ├── tencent.js          行情/K线/分时/搜索（GBK 解码）
     │   │   ├── sina.js             日线备源
@@ -407,7 +407,7 @@ node tests/llm-loop.test.mjs          #  31 项  自建工具循环
 node tests/drawing-store.test.mjs     #  30 项  画线存储（非法条目不静默修正）
 node tests/chat-service.test.mjs      #  30 项  Chat 服务装配
 node tests/host.test.mjs              #  23 项  装配契约 + 架构铁律 + 降级
-node tests/local-storage.test.mjs     #  21 项  本地库读写 + **跨语言契约**（2 项需 Python）
+node tests/local-storage.test.mjs     #  25 项  本地库读写 + **跨语言契约 + 数据根同构**（3 项需 Python）
 node tests/market-service.test.mjs    #  19 项  代码规范化 / 缓存 / single-flight
 node tests/research.test.mjs          #  18 项  研究台账生命周期
 node tests/chat-persistence.test.mjs  #  16 项  持久化 + 会话映射
@@ -424,13 +424,13 @@ node tests/smoke-chat.mjs             # 右栏 Chat 真实链路（SSE 分段 / 
 node tests/smoke-chat-ui.mjs          # 右栏 UI 的真实调用路径
 
 # Python 侧
-python backend/tests/test_storage.py       # 10 项  存储层
+python backend/tests/test_storage.py       # 18 项  存储层 + 数据根解析
 python backend/tests/test_event_study.py   #  9 项  事件研究
 ```
 
-**合计 717 项 JS 离线测试 + 19 项 Python = 736 项，2026-10-27 实测全部通过。**
+**合计 721 项 JS 离线测试 + 27 项 Python = 748 项，2026-10-28 实测全部通过。**
 
-⚠️ **这个总数取决于 Python 是否可见**：`quant-bridge` 与 `local-storage` 里有 5 项子测试要真的起 Python 解释器，**探测不到时它们会被自动跳过**，总数退化为 **712 项**（quant-bridge 7→4、local-storage 21→19）。插件按 `DSH_STOCK_LAB_PYTHON` → 包内 `.python-path` → `DSH_PYTHON` → **DSH 自带运行时**（`~/.dsh/dsh-runtimes/.../python.exe`）→ PATH 上的 `python` 依次找（见 `quant-bridge/index.js`）。坑在于：**宿主进程通常不把 python 放进 PATH**，所以第 4 步才是实际生效的那一步——这也是"同一份代码在两台机器上跑出不同测试数"的原因，值得记下来。
+⚠️ **这个总数取决于 Python 是否可见**：`quant-bridge` 与 `local-storage` 里有 6 项子测试要真的起 Python 解释器，**探测不到时它们会被自动跳过**，总数退化为 **715 项**（quant-bridge 7→4、local-storage 25→22）。插件按 `DSH_STOCK_LAB_PYTHON` → 包内 `.python-path` → `DSH_PYTHON` → **DSH 自带运行时**（`~/.dsh/dsh-runtimes/.../python.exe`）→ PATH 上的 `python` 依次找（见 `quant-bridge/index.js`）。坑在于：**宿主进程通常不把 python 放进 PATH**，所以第 4 步才是实际生效的那一步——这也是"同一份代码在两台机器上跑出不同测试数"的原因，值得记下来。
 
 ### 几个值得说明的测试设计
 
@@ -470,13 +470,13 @@ python backend/tests/test_event_study.py   #  9 项  事件研究
 
 | 类型 | 规模（**非空行口径**） |
 |---|---|
-| 设计文档 | 约 1,394 行（3 份：PLUGIN_REVIEW 137 + ARCHITECTURE 715 + ROADMAP 542；含空行约 1,788 行）。**这个数随文档更新就变**——改动这三份文档后请一并复核它，别让它像本轮那样过期 |
-| JS 源码 | 11,128 行 / 33 文件 |
-| Python 后端 | 779 行 / 5 文件 |
-| 测试 | 6,398 行 / 23 文件 |
-| **合计**（不含设计文档） | **约 18,300 行** |
+| 设计文档 | 约 1,425 行（3 份：PLUGIN_REVIEW 137 + ARCHITECTURE 734 + ROADMAP 554；含空行约 1,827 行）。**这个数随文档更新就变**——改动这三份文档后请一并复核它，别让它像本轮那样过期 |
+| JS 源码 | 11,208 行 / 33 文件 |
+| Python 后端 | 975 行 / 5 文件 |
+| 测试 | 6,508 行 / 23 文件 |
+| **合计**（不含设计文档） | **约 18,700 行** |
 
-口径说明：**不含空行**（即过滤掉 `trim() === ''` 的行）。同一批文件按"含空行"算是 11,885 / 6,710 / 939 行，两个口径差别不小，写进文档时别混用。
+口径说明：**不含空行**（即过滤掉 `trim() === ''` 的行）。同一批文件按"含空行"算是 11,973 / 6,827 / 1,166 行，两个口径差别不小，写进文档时别混用。
 
 ## 设计文档索引
 
@@ -496,9 +496,10 @@ python backend/tests/test_event_study.py   #  9 项  事件研究
 | **数据源字段** | 腾讯按位置取值：误把成交量当成交额（差 13 倍）、误把成交额当换手率（变成 76 万）；东财 PE/PB 放大 100 倍；东财财务字段是 `REPORTDATE` 不是 `REPORT_DATE` |
 | **DSH 插件机制** | `inject` 缺 `tools`/`skills` → **AI 工具静默不注册**（界面正常但 AI 完全不可用）；`ctx.set()` 需要 `declare provide` |
 | **跨语言契约** | 读写两方数据目录解析不一致 → **写进 A 却读 B**，数据在却报"无数据" |
+| **空库顶掉真库** | "有数据"曾按「`meta.db`/`bars/` 存在」判断；只读命令 `collector.py status` 顺手建出**空 meta.db**，于是空目录把包内真库顶掉——界面本地 K 线为空、**画线全部消失**。已改为"有真实 `*.csv.gz`/`*.parquet` 才算数据"，并让只读路径不再建目录（2026-10-28） |
 | **统计边界** | 成交量 z-score 在历史标准差为 0 时（一字板）会算出无穷大，原实现返回 null 导致"极端异常"被静默吞掉 |
 | **画线的静默失效** | 拖动预览不跟随（画水平线读 `s.price`，草稿只带 `points` → NaN）；Ctrl+Z 不生效（`preventDefault()` 连带阻止了焦点交接）；`resolveDrawings` 只透传 label/reason，**丢掉 `color` 与 `ext`** → 改颜色不变色、趋势线预览是射线画出来却是线段 |
-| **测试数随环境变** | 有 5 项子测试依赖 Python 解释器，探不到就自动跳过（717↔712）。"测试少了"未必是代码坏了，先查 Python 路径 |
+| **测试数随环境变** | 有 6 项子测试依赖 Python 解释器，探不到就自动跳过（721↔715）。"测试少了"未必是代码坏了，先查 Python 路径 |
 
 ---
 

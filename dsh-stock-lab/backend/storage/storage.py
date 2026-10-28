@@ -28,18 +28,61 @@ import pandas as pd
 # 路径
 # ---------------------------------------------------------------------------
 
+def _pkg_root() -> Path:
+    """包根目录（含 package.json / backend / src）。
+
+    `<包根>/backend/storage/storage.py` → parents[0]=storage, [1]=backend, [2]=包根。
+    """
+    return Path(__file__).resolve().parents[2]
+
+
+# 与 src/data-root.js 的 DATA_SUFFIXES 保持一致
+_DATA_SUFFIXES = (".csv.gz", ".parquet")
+# 最多扫描多少个 symbol 目录（防止海量空目录把解析拖慢；找到第一个就返回）
+_SCAN_LIMIT = 200
+
+
+def _has_data(d: Path) -> bool:
+    """某个候选目录里是否**真的有** K 线数据。
+
+    判据：`bars/<symbol>/` 下至少有一个 `*.csv.gz` / `*.parquet`。
+    刻意**不**把「meta.db 存在」或「bars/ 目录存在」当成有数据——
+    空库（schema 建好但 0 行、或只有空目录）会把真正的数据目录顶掉。
+    这是实测踩过的坑：只读命令曾顺手建出空 meta.db，导致真库"消失"。
+    """
+    bars = d / "bars"
+    try:
+        names = sorted(p for p in bars.iterdir())[:_SCAN_LIMIT]
+    except OSError:
+        return False
+    for sub in names:
+        try:
+            if not sub.is_dir():
+                continue
+            for f in sub.iterdir():
+                if f.is_file() and f.name.endswith(_DATA_SUFFIXES):
+                    return True
+        except OSError:
+            continue
+    return False
+
+
 def _home() -> Path:
     """数据根目录。
 
-    优先级：
-      1. DSH_STOCK_LAB_DATA  —— 显式指定（推荐，可指向工作区内）
-      2. DSH_STOCK_LAB_HOME/data
-      3. $DSH_HOME/stock-lab/data
-      4. ~/.dsh/stock-lab/data
+    解析顺序**必须与 `src/data-root.js` 的 `resolveDataRoot()` 完全同构**：
+
+      1. DSH_STOCK_LAB_DATA        —— 显式指定 → 直接采用（即使目录还不存在）
+      2. DSH_STOCK_LAB_HOME/data   —— 显式指定 → 直接采用（不再探测有没有数据）
+      3. $DSH_HOME/stock-lab/data  —— 隐式候选：第一个"真的有 K 线数据"的
+      4. <包根>/data               —— 都没有数据时取它（开发期默认）
 
     注：DSH 沙箱允许写 profile 目录内部（插件运行时自己建的），但不允许
     在 ~/.dsh 下新建顶层目录，因此实际部署时建议用 DSH_STOCK_LAB_DATA
     指向工作区内的数据目录。
+
+    ⚠️ 第 3/4 步的"有数据"判据见 `_has_data()`：**空目录/空 meta.db 不算数据**。
+    Python 侧曾经没有第 4 步（只有 Node 有），于是命令行和运行期会指向不同目录。
     """
     explicit = os.environ.get("DSH_STOCK_LAB_DATA")
     if explicit:
@@ -48,7 +91,11 @@ def _home() -> Path:
     if home:
         return Path(home) / "data"
     dsh_home = os.environ.get("DSH_HOME") or str(Path.home() / ".dsh")
-    return Path(dsh_home) / "stock-lab" / "data"
+    candidates = [Path(dsh_home) / "stock-lab" / "data", _pkg_root() / "data"]
+    for c in candidates:
+        if _has_data(c):
+            return c
+    return candidates[-1]
 
 
 DATA_DIR = _home()
@@ -76,7 +123,22 @@ def ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def connect_meta() -> sqlite3.Connection:
+def connect_meta(*, create: bool = True) -> sqlite3.Connection:
+    """打开 meta.db。
+
+    - `create=True`（默认，**写入方**用）：建目录、建表、可写。
+    - `create=False`（**只读方**用）：**不建目录、不建表、不可写**（PRAGMA query_only）。
+      meta.db 不存在时抛 FileNotFoundError——调用方应先判断，不要靠"打开时顺手建库"。
+
+    为什么要有只读模式：只读命令一旦顺手建库/建目录，就会在磁盘上留下"看起来像库"的空目录，
+    而空目录会被数据根解析当成候选，进而把真正的库顶掉（见 `_home()` / `_has_data()`）。
+    """
+    if not create:
+        if not META_DB.exists():
+            raise FileNotFoundError(str(META_DB))
+        con = sqlite3.connect(str(META_DB))
+        con.execute("PRAGMA query_only = ON")
+        return con
     ensure_dirs()
     con = sqlite3.connect(META_DB)
     con.execute(
@@ -103,11 +165,19 @@ def connect_meta() -> sqlite3.Connection:
 # 路径解析
 # ---------------------------------------------------------------------------
 
-def bars_path(symbol: str, timeframe: str = "1d", adjust: str = "qfq") -> Path:
+def bars_path(symbol: str, timeframe: str = "1d", adjust: str = "qfq", *, create: bool = False) -> Path:
+    """某个标的的 K 线文件路径。
+
+    `create=False`（默认）**不创建任何目录**：只读路径（load / status / version）
+    不应该因为"看一眼"就在磁盘上留下空目录——空目录会被别的逻辑当成"这里有数据"，
+    进而把真正的数据根顶掉（见 `_home()` 与 `_has_data()` 的注释）。
+    只有真正的写入方（`save_bars`）才传 `create=True`。
+    """
     safe = symbol.replace("/", "_").replace("\\", "_")
-    ensure_dirs()
     base = BARS_DIR / safe
-    base.mkdir(parents=True, exist_ok=True)
+    if create:
+        ensure_dirs()
+        base.mkdir(parents=True, exist_ok=True)
     ext = "parquet" if HAS_PARQUET else "csv.gz"
     return base / f"{timeframe}_{adjust}.{ext}"
 
@@ -139,7 +209,7 @@ def save_bars(
     out = out.sort_values("time").drop_duplicates(subset=["time"], keep="last")
 
     # 合并已有数据（增量采集时保留历史）
-    path = bars_path(symbol, timeframe, adjust)
+    path = bars_path(symbol, timeframe, adjust, create=True)
     if path.exists():
         old = _read_any(path)
         if old is not None and not old.empty:
@@ -200,10 +270,23 @@ def load_bars(
 
 
 def list_bars_meta() -> list[dict]:
-    con = connect_meta()
+    """列出已落库的元信息。
+
+    只读：没有 meta.db 就返回空；**不建目录、不建表、不改写文件**（用 `connect_meta(create=False)`）。
+    空文件 / 损坏的 meta.db 也返回空而不抛错——只读查询不该因为坏文件而崩。
+    """
+    if not META_DB.exists():
+        return []
     try:
-        rows = con.execute("SELECT * FROM bars_meta ORDER BY symbol").fetchall()
-        cols = [d[0] for d in con.execute("SELECT * FROM bars_meta LIMIT 0").description]
+        con = connect_meta(create=False)
+    except (sqlite3.Error, OSError):
+        return []
+    try:
+        try:
+            rows = con.execute("SELECT * FROM bars_meta ORDER BY symbol").fetchall()
+            cols = [d[0] for d in con.execute("SELECT * FROM bars_meta LIMIT 0").description]
+        except sqlite3.Error:
+            return []
     finally:
         con.close()
     return [dict(zip(cols, r)) for r in rows]

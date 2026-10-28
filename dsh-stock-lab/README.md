@@ -748,7 +748,7 @@ node tests/research.test.mjs         # 18 项，研究笔记存储层
 node tests/research-tools.test.mjs   # 14 项，研究类 AI Tools
 node tests/quant-bridge.test.mjs     #  7 项（Python 不可用时自动跳过 3 项 → 4 项）
 node tests/watch.test.mjs            # 39 项，盯盘条件求值 + 规则存储 + 冷却 + digest
-node tests/local-storage.test.mjs    # 21 项（Python 不可用时跳过 2 项 → 19 项）
+node tests/local-storage.test.mjs    # 25 项（Python 不可用时跳过 3 项 → 22 项）
 node tests/tdx.test.mjs              # 61 项，TDX 解析/求值语义/诊断/未来函数
 node tests/formula-store.test.mjs    # 42 项，公式库 + 公式工具 + lossless-JSON 校验
 node tests/drawing-store.test.mjs    # 30 项，画线持久化（锚点/复权/损坏文件都不静默）
@@ -764,16 +764,15 @@ node tests/smoke-chat.mjs            # 右栏 Chat 真实链路冒烟（打真�
 node tests/smoke-chat-ui.mjs         # 右栏 UI 调用路径冒烟（含停止/清空，15 项检查）
 
 # Python 侧
-python backend/tests/test_storage.py       # 10 项，存储层
+python backend/tests/test_storage.py       # 18 项，存储层 + 数据根解析
 python backend/tests/test_event_study.py   #  9 项，事件研究
 ```
 
-合计 **JS 717 项 + Python 19 项 = 736 项自动化测试**（2026-10-27 实跑复核），另有 5 套真实冒烟（网络 ×2、真实 K 线 ×1、真实 LLM ×2）**不并入计数**。
+合计 **JS 721 项 + Python 27 项 = 748 项自动化测试**（2026-10-28 实跑复核），另有 5 套真实冒烟（网络 ×2、真实 K 线 ×1、真实 LLM ×2）**不并入计数**。
 
-> ⚠️ **同一个"717"是环境相关的，不是恒定值**：`quant-bridge`（3 项）与 `local-storage`（2 项）里有 5 个断言需要真的启动 Python 解释器，
-> 探测不到时会**自动跳过并在输出里写明**，总数随之变成 **712**（16 套 = 699 + 资源校验 13）。
-> 实测两次跑出不同数字就是因为这个：一次在受限沙箱下（Python 在 `~/.dsh/dsh-runtimes` 下、工作区外，被拒绝执行）得 712，
-> 放开后得 736。所以**报数字时必须带上前提**；复跑请从插件目录执行（`cd dsh-stock-lab` 再 `node tests/xxx.mjs`）。
+> ⚠️ **同一个数字是环境相关的，不是恒定值**：`quant-bridge`（3 项）与 `local-storage`（3 项）里有 6 个断言需要真的启动 Python 解释器，
+> 探测不到时会**自动跳过并在输出里写明**，总数随之变成 **715**（16 套 = 702 + 资源校验 13）。
+> 所以**报数字时必须带上前提**；复跑请从插件目录执行（`cd dsh-stock-lab` 再 `node tests/xxx.mjs`）。
 
 > **测试不得留垃圾**：临时目录清理统一走 `tests/cleanup.mjs`（重试 + **失败要出声**）。
 > 不能写成 `try { rmSync(dir) } catch { }`——Windows 上只要还有 SQLite 连接没关，
@@ -793,18 +792,16 @@ python backend/collectors/collector.py status
 python backend/collectors/collector.py version SH600519 IDX300      # 数据版本指纹
 ```
 
-> ⚠️ **命令行要显式指定数据根目录**（实测踩到的）：Python 侧 `storage.py` 的 `_home()` 只按
-> `DSH_STOCK_LAB_DATA` → `DSH_STOCK_LAB_HOME/data` → `$DSH_HOME/stock-lab/data` → `~/.dsh/stock-lab/data` 找，
-> **没有"包内 `data/`"这一档**；而 Node 侧 `resolveDataRoot()` 有。
-> 于是开发期数据落在包内 `data/` 时，裸跑 `collector.py status` 会显示"尚无落库数据"（库其实在包内），
-> 而**运行期不会**有这个问题——quant-bridge 会把 Node 解析出的目录作为 `DSH_STOCK_LAB_DATA` 传给子进程。
-> 命令行请带上环境变量：`DSH_STOCK_LAB_DATA="<包根>/data" python backend/collectors/collector.py status`。
-> 这个不对称本身是两处逻辑未真正统一的残留（Node 多一档候选），已记在此处而不是假装一致。
+> **数据根目录：Node 与 Python 两侧解析规则完全同构**（2026-10-28 修复）。
+> 顺序：`DSH_STOCK_LAB_DATA` → `DSH_STOCK_LAB_HOME/data`（这两档是显式指定，**直接采用**）→
+> `$DSH_HOME/stock-lab/data` → `<包根>/data`（后两档按**"真的有 K 线文件"**挑选）。
+> 所以裸跑 `collector.py status` 与插件运行期看到的是**同一个库**，不需要额外加环境变量。
+> （此前 Python 侧少一档"包内 `data/`"，命令行会指向空库、与运行期分叉；现已对齐，且有跨语言契约测试守着。）
 
 存储布局：
 
 ```
-data/                                  ← 根目录由 src/data-root.js 唯一定义
+data/                                  ← 数据根目录（Node/Python 两侧同构解析，见下）
 ├── meta.db                         SQLite：采集元信息（行数/区间/来源/时间/后端）
 └── bars/<symbol>/1d_qfq.csv.gz     K线（按标的与周期分区）
 ```
@@ -818,8 +815,9 @@ data/                                  ← 根目录由 src/data-root.js 唯一�
 `src/datasource/local.js` 用 Node 原生能力读本地库：`node:zlib` 解 `csv.gz`、`node:sqlite` 读 `meta.db`。因此 K 线的日常读取**不启动 Python 子进程**。
 
 > ⚠️ **读写两方必须指向同一目录**。本地库的写入方是 Python、读取方是 Node，若各自按不同顺序回退，就会出现「写进了 A、却去 B 读」——数据明明在却显示"本地无数据"。
-> 所以根目录只在 `src/data-root.js` 定义一次，且 quant-bridge 会把它作为 `DSH_STOCK_LAB_DATA` 传给 Python 子进程。
-> 有专门的跨语言契约测试（`tests/local-storage.test.mjs`）：**让 Python 真的写一次，Node 读回来逐项比对**，并比对两侧解析出的目录是否一致。
+> 现在的做法是**两份实现、同一套规则**：`src/data-root.js` 的 `resolveDataRoot()` 与 `backend/storage/storage.py` 的 `_home()`
+> 逐步对齐（环境变量优先级、包内兜底、"有数据"的判据全部一致），并由跨语言契约测试**真的让 Python 跑一次 `_home()`、与 Node 的 `resolveDataRoot()` 逐字比对**；运行期 quant-bridge 还会把 Node 解析结果作为 `DSH_STOCK_LAB_DATA` 传给子进程，作为第二道保险。
+> ⚠️ **"有数据"的判据是"有真实 K 线文件"**（`bars/<symbol>/` 下的 `*.csv.gz`/`*.parquet`），**不是** "`meta.db` 或 `bars/` 目录存在"——空库曾经把真库顶掉，见「已知的本地数据层坑」。
 
 `local.js` 按**列名**取值（不依赖列顺序），列顺序变化不会破坏读取；有对应测试。
 
@@ -935,6 +933,22 @@ AI Tools：
 - **底部 tabs**：新闻 / 财务 / 资金流 / 所属行业 / 量化验证 / 智能盯盘 / 研究笔记 / 指标公式
 
 UI 状态（当前股票、周期、区间、基准）自动上报，AI 对话时无需重复股票名。
+
+## 已知的本地数据层坑（实测）
+
+- **空库会顶掉真库**（2026-10-28 修复）：
+  旧判据是「`meta.db` 或 `bars/` 目录存在 → 视为有数据」。但 `collector.py status` 这类**只读命令**
+  会顺手 `ensure_dirs()` + 建 `meta.db`（schema 建好、0 行），于是 `$DSH_HOME/stock-lab/data` 这个
+  **空目录**被当成"有数据"，把包内 `data/`（真有 5 个标的）整个顶掉。
+  症状：`status` 报"尚无落库数据"、界面本地 K 线为空、**画线也全部消失**（`drawings/` 跟着根目录走）。
+  修法三步：① "有数据"改判「`bars/<symbol>/` 下至少有一个 `*.csv.gz` / `*.parquet`」；
+  ② 只读路径（`bars_path` / `load_bars` / `list_bars_meta` / `data_version`）**不再创建任何目录**；
+  ③ Python `_home()` 补上「包内 `data/`」兜底，与 Node **完全同构**。
+  回归测试：`tests/local-storage.test.mjs`（空库 / 真库 / 缓存 / 跨语言同构 4 项）+
+  `backend/tests/test_storage.py`（解析优先级 / 空库不算数据 / 只读不建目录 / 0 字节库 8 项）。
+- **解析结果有缓存，但只在"环境变量+10 秒"内有效**：`local.js` 每次读盘都会调 `resolveDataRoot()`，
+  不能每次都扫目录；缓存键包含三个环境变量，所以改 env 立刻失效，新采集的数据最多 10 秒后被看到。
+  测试里要立即生效就调 `__resetDataRootCache()`（只给测试用）。
 
 ## 已知的数据源坑（实测记录）
 

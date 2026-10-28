@@ -16,6 +16,7 @@ import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import zlib from 'node:zlib'
 import { execFileSync } from 'node:child_process'
+import { DatabaseSync } from 'node:sqlite'
 
 const ROOT = join(process.cwd(), '.test-data', 'local-contract')
 rmSync(ROOT, { recursive: true, force: true })
@@ -25,7 +26,7 @@ delete process.env.DSH_STOCK_LAB_HOME
 delete process.env.DSH_HOME
 
 const local = await import('../src/datasource/local.js')
-const { resolveDataRoot, pkgRoot, backendDir } = await import('../src/data-root.js')
+const { resolveDataRoot, pkgRoot, backendDir, __resetDataRootCache } = await import('../src/data-root.js')
 
 let passed = 0
 async function t(name, fn) {
@@ -33,14 +34,28 @@ async function t(name, fn) {
   catch (e) { console.error('  ✗ ' + name + '\n    ' + e.message); process.exitCode = 1 }
 }
 
-/** 模拟 Python storage.py 的写盘方式（gzip + 同样表头） */
-function writeCsvGz(symbol, rows, header = ['time', 'open', 'close', 'high', 'low', 'volume', 'amount', 'adjust', 'source']) {
-  const dir = join(ROOT, 'bars', symbol)
+/** 模拟 Python storage.py 的写盘方式（gzip + 同样表头），写到指定数据根 */
+function writeCsvGzAt(rootDir, symbol, rows, header = ['time', 'open', 'close', 'high', 'low', 'volume', 'amount', 'adjust', 'source']) {
+  const dir = join(rootDir, 'bars', symbol)
   mkdirSync(dir, { recursive: true })
   const lines = [header.join(',')]
   for (const r of rows) lines.push(header.map((h) => (r[h] === undefined || r[h] === null ? '' : r[h])).join(','))
   writeFileSync(join(dir, '1d_qfq.csv.gz'), zlib.gzipSync(lines.join('\n') + '\n'))
 }
+
+/** 模拟"只读命令留下的空库"：建了 schema 的 meta.db（0 行）+ 一个空的 symbol 目录 */
+function makeEmptyLibrary(dataDir) {
+  mkdirSync(join(dataDir, 'bars', 'SH600000'), { recursive: true })
+  mkdirSync(dataDir, { recursive: true })
+  const db = new DatabaseSync(join(dataDir, 'meta.db'))
+  db.exec(`CREATE TABLE IF NOT EXISTS bars_meta (
+    symbol TEXT NOT NULL, timeframe TEXT NOT NULL, adjust TEXT NOT NULL, rows INTEGER NOT NULL,
+    first_bar TEXT, last_bar TEXT, source TEXT, fetched_at TEXT NOT NULL, backend TEXT NOT NULL,
+    PRIMARY KEY (symbol, timeframe, adjust))`)
+  db.close()
+}
+
+const writeCsvGz = (symbol, rows, header) => writeCsvGzAt(ROOT, symbol, rows, header)
 
 console.log('数据根目录解析')
 await t('显式 DSH_STOCK_LAB_DATA 优先', () => {
@@ -67,6 +82,72 @@ await t('DSH_STOCK_LAB_HOME 也被显式尊重（即使目录里还没有数据�
     else delete process.env.DSH_STOCK_LAB_DATA
     if (savedHome !== undefined) process.env.DSH_STOCK_LAB_HOME = savedHome
     else delete process.env.DSH_STOCK_LAB_HOME
+  }
+})
+
+console.log('\n数据根目录：空库不算数据（回归）')
+// 背景（真实缺陷）：只读命令（collector.py status）曾经顺手把空 meta.db / 空 bars 目录建出来，
+// 而旧判据只看「meta.db 或 bars/ 是否存在」，于是这个空库把真正的数据目录顶掉——
+// 表现是"数据明明在，界面显示无数据、连画线都不见了"。
+const EMPTY_HOME = join(ROOT, 'empty-root-home')
+const EMPTY_DATA = join(EMPTY_HOME, 'stock-lab', 'data')
+
+await t('空 meta.db + 空 bars 目录不算数据（回退到包内 data）', () => {
+  const savedData = process.env.DSH_STOCK_LAB_DATA
+  const savedHome = process.env.DSH_STOCK_LAB_HOME
+  const savedDsh = process.env.DSH_HOME
+  try {
+    delete process.env.DSH_STOCK_LAB_DATA
+    delete process.env.DSH_STOCK_LAB_HOME
+    process.env.DSH_HOME = EMPTY_HOME
+    makeEmptyLibrary(EMPTY_DATA)
+    __resetDataRootCache()
+    assert.equal(resolveDataRoot(), join(pkgRoot, 'data'))
+  } finally {
+    if (savedData !== undefined) process.env.DSH_STOCK_LAB_DATA = savedData
+    if (savedHome !== undefined) process.env.DSH_STOCK_LAB_HOME = savedHome
+    if (savedDsh !== undefined) process.env.DSH_HOME = savedDsh
+    else delete process.env.DSH_HOME
+    __resetDataRootCache()
+  }
+})
+
+await t('有真实 K 线文件才算数据（选中该目录）', () => {
+  const savedData = process.env.DSH_STOCK_LAB_DATA
+  const savedHome = process.env.DSH_STOCK_LAB_HOME
+  const savedDsh = process.env.DSH_HOME
+  try {
+    delete process.env.DSH_STOCK_LAB_DATA
+    delete process.env.DSH_STOCK_LAB_HOME
+    process.env.DSH_HOME = EMPTY_HOME
+    writeCsvGzAt(EMPTY_DATA, 'SH600000', [{ time: '2026-01-05', open: 1, close: 1.5, high: 2, low: 0.5, volume: 100 }])
+    __resetDataRootCache()
+    assert.equal(resolveDataRoot(), EMPTY_DATA)
+  } finally {
+    if (savedData !== undefined) process.env.DSH_STOCK_LAB_DATA = savedData
+    if (savedHome !== undefined) process.env.DSH_STOCK_LAB_HOME = savedHome
+    if (savedDsh !== undefined) process.env.DSH_HOME = savedDsh
+    else delete process.env.DSH_HOME
+    __resetDataRootCache()
+  }
+})
+
+await t('解析结果有缓存，但环境变量变化会立即失效', () => {
+  const savedDsh = process.env.DSH_HOME
+  const savedData = process.env.DSH_STOCK_LAB_DATA
+  try {
+    delete process.env.DSH_STOCK_LAB_DATA
+    process.env.DSH_HOME = EMPTY_HOME
+    const a = resolveDataRoot()               // 命中缓存/或解析为 EMPTY_DATA
+    process.env.DSH_HOME = join(ROOT, 'another-home')
+    const b = resolveDataRoot()               // 环境变了 → 必须重新解析（不能沿用缓存）
+    assert.equal(a, EMPTY_DATA)
+    assert.equal(b, join(pkgRoot, 'data'))    // 新目录没有数据 → 回包包内 data
+  } finally {
+    if (savedDsh !== undefined) process.env.DSH_HOME = savedDsh
+    else delete process.env.DSH_HOME
+    if (savedData !== undefined) process.env.DSH_STOCK_LAB_DATA = savedData
+    __resetDataRootCache()
   }
 })
 
@@ -235,6 +316,42 @@ print(storage.DATA_DIR)
       timeout: 30000, encoding: 'utf8',
     }).trim()
     assert.equal(out, ROOT, 'Python 与 Node 的数据目录不一致：' + out + ' vs ' + ROOT)
+  })
+  await t('空库场景下 Node 与 Python 解析出的目录也一致（解析同构回归）', () => {
+    // 两侧都只设 DSH_HOME 指向一个"空库"（有 meta.db/schema 但没有 K 线文件），
+    // 必须都忽略它、都回退到包内 data——这正是命令行与运行期曾经分叉的场景。
+    const parityHome = join(ROOT, 'parity-home')
+    makeEmptyLibrary(join(parityHome, 'stock-lab', 'data'))
+    const script = `
+import sys
+sys.path.insert(0, r"${join(backendDir, 'storage')}")
+import storage
+print(storage._home())
+`
+    const env = { ...process.env, PYTHONIOENCODING: 'utf-8', DSH_HOME: parityHome }
+    delete env.DSH_STOCK_LAB_DATA
+    delete env.DSH_STOCK_LAB_HOME
+    const out = execFileSync(pyPath, ['-c', script], { env, timeout: 30000, encoding: 'utf8' }).trim()
+
+    const savedData = process.env.DSH_STOCK_LAB_DATA
+    const savedHome = process.env.DSH_STOCK_LAB_HOME
+    const savedDsh = process.env.DSH_HOME
+    let nodeRoot
+    try {
+      delete process.env.DSH_STOCK_LAB_DATA
+      delete process.env.DSH_STOCK_LAB_HOME
+      process.env.DSH_HOME = parityHome
+      __resetDataRootCache()
+      nodeRoot = resolveDataRoot()
+    } finally {
+      if (savedData !== undefined) process.env.DSH_STOCK_LAB_DATA = savedData
+      if (savedHome !== undefined) process.env.DSH_STOCK_LAB_HOME = savedHome
+      if (savedDsh !== undefined) process.env.DSH_HOME = savedDsh
+      else delete process.env.DSH_HOME
+      __resetDataRootCache()
+    }
+    assert.equal(out, nodeRoot, `空库场景下两侧不一致：Python=${out} vs Node=${nodeRoot}`)
+    assert.equal(out, join(pkgRoot, 'data'), '空库不应被选中，应回退到包内 data：' + out)
   })
 } else {
   console.log('  - 跳过真实往返（未找到可用的 Python 解释器）')

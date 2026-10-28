@@ -483,6 +483,19 @@ T1.4(K线组件) ✅ ──→ T8.1(K 线可视窗口与交互) ✅ ──→ T8
 - [x] **本仓库首次纳入 git** ✅（2026-10-27）：首提交 `84364bd` 为现状快照，随后一笔为文档对齐
   （本次任务只改 `ROADMAP.md` 与 `ARCHITECTURE.md`；提交与推送由 Lead 负责）
 
+- [x] **数据根目录解析修复：空库不再顶掉真库** ✅（2026-10-28）
+  - 触发：校验时发现 `$DSH_HOME/stock-lab/data` 被**只读命令**建出了空 `meta.db`（schema 在、0 行），
+    而旧判据只看"`meta.db` / `bars/` 是否存在"，于是这个空目录把包内 `data/`（5 标的 / 2,104 行）顶掉——
+    症状是 `status` 报"尚无落库数据"、界面本地 K 线为空、**画线全部消失**（`drawings/` 跟着根目录走）
+  - 修复三项：① "有数据"改判「`bars/<symbol>/` 下至少一个 `*.csv.gz` / `*.parquet`」；
+    ② 只读路径不再建目录（`bars_path(create=False)`、`list_bars_meta()` 无库即返回 `[]`）；
+    ③ Python `_home()` 补「包内 `data/`」兜底，与 Node `resolveDataRoot()` **完全同构**（此前 Python 少一档，命令行与运行期分叉）
+  - 验收：裸跑 `python backend/collectors/collector.py status` → **5 标的 / 2,104 行**（修复前报"尚无落库数据"）；
+    Node `resolveDataRoot()` 回到包内 `data/`；只读命令不再在 `$DSH_HOME` 下创建任何目录
+  - 测试：JS 717 → **721**（local-storage 21 → 25，含空库/真库/缓存/跨语言同构）；
+    Python 10 → **18**（解析优先级 / 空库不算数据 / 只读不建目录 / 0 字节库）
+  - 设计记录：ARCHITECTURE §4 与 **§9.20**；踩坑记录见插件 README「已知的本地数据层坑」
+
 - [ ] **下一步**：Phase 1 收尾——AI Chat 联动验证（在对话中问当前股票）、Phase 2 历史落库
 
 ---
@@ -525,7 +538,7 @@ T1.4(K线组件) ✅ ──→ T8.1(K 线可视窗口与交互) ✅ ──→ T8
   - 内联复盘：四档结论按钮（完全正确/部分正确/判断错误/作废）+ 复盘正文
   - 底部同时新增「所属行业」tab：板块行情 + 成分股涨跌榜（判断个股是行业普跌还是独立行情）
 - [x] **T2.2b 本地库接入 MarketService（数据可靠性）** ✅（2026-10-23 完成）
-  - `src/data-root.js`：数据根目录的**唯一定义**（此前读写两方各按不同顺序回退，存在「写进 A / 读 B」的真实缺陷）
+  - `src/data-root.js`：数据根目录解析（Node 侧）；**Python 侧 `storage.py._home()` 与它完全同构**，由跨语言契约测试守住（此前读写两方各按不同顺序回退，存在「写进 A / 读 B」的真实缺陷；2026-10-28 又修了"空库顶掉真库"，见当前状态）
   - `src/datasource/local.js`：Node 原生直读本地库（`node:zlib` 解 csv.gz、`node:sqlite` 读 meta.db），**不需要 Python 子进程**
   - 按列名取值（列顺序无关）、空值归一为 null、损坏文件返回 null 而不崩溃
   - `MarketService.getKline` 支持来源路由：`auto`（本地优先）/ `local`（只用本地，可复现）/ `live`
@@ -597,7 +610,7 @@ T1.4(K线组件) ✅ ──→ T8.1(K 线可视窗口与交互) ✅ ──→ T8
 
 > 复跑环境：Node **v24.19.0**；Python **3.12.14**（DSH 运行时自带，路径 `~/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/python/`，
 > 探测顺序见 `src/services/quant-bridge/index.js:32-38`）。
-> 16 套 `tests/*.test.mjs` 均为离线测试，各自把数据写进 `os.tmpdir()` 隔离目录。
+> 16 套 `tests/*.test.mjs` 均为离线测试，各自把数据写进隔离目录（系统临时目录或项目内 `.test-data/`，两者都已排除在版本库外）。
 
 ```text
 JS（node tests/<name>.test.mjs）：
@@ -609,7 +622,7 @@ JS（node tests/<name>.test.mjs）：
   research-tools.test.mjs      →  14 passed（研究工具）
   quant-bridge.test.mjs        →   7 passed（Node→Python 桥 + 真实执行）
   watch.test.mjs               →  39 passed（盯盘求值 + 存储 + 冷却 + digest）
-  local-storage.test.mjs       →  21 passed（本地库读写 + 跨语言契约）
+  local-storage.test.mjs       →  25 passed（本地库读写 + 跨语言契约 + 数据根同构/空库回归）
   tdx.test.mjs                 →  61 passed（词法/语法/求值/未来函数）
   formula-store.test.mjs       →  42 passed（公式存储 + 导入通道）
   llm-loop.test.mjs            →  31 passed（多轮工具循环）
@@ -617,16 +630,16 @@ JS（node tests/<name>.test.mjs）：
   chat-service.test.mjs        →  30 passed（ChatService + 工具白名单）
   chat-persistence.test.mjs    →  16 passed（会话映射 + 落库顺序）
   drawing-store.test.mjs       →  30 passed（画线存储 + 锚点规范 + data-root 回归）
-  ── 16 套小计 704
+  ── 16 套小计 708
   validate-resources.mjs       →  13 passed（展示资源 + 清单一致性）
-  ── JS 合计 **717**
+  ── JS 合计 **721**
 
 Python（python backend/tests/<name>.py）：
-  test_storage.py              →  10 passed
+  test_storage.py              →  18 passed
   test_event_study.py          →   9 passed
-  ── 小计 19
+  ── 小计 27
 
-合计 JS 717 + Python 19 = **736 项全通过**
+合计 JS 721 + Python 27 = **748 项全通过**
 ```
 
 **历史数字**：2026-10-23 的记录为「JS 189 + Python 19 = 208 项」；各任务条目里出现的
@@ -636,10 +649,10 @@ T6.1 / T6.2 条目里的 26 / 23 / 12 同理；
 本节复跑数字是唯一当前口径。
 
 > ⚠️ **可复现性注意事项：Python 缺失时总数会变小，而且不报错。**
-> `quant-bridge` 与 `local-storage` 中共有 **5 个子测试需要真实 Python 解释器**（探测顺序见上）。
-> 探测不到时它们**自动跳过、测试仍然全绿**，表现为 quant-bridge 4 项（真实 7）、local-storage 19 项（真实 21），
-> 合计退化为 **712 项**（717 − 5）。因此引用"全通过"时必须同时给出运行环境与 Python 是否可用，
-> 否则数字对不上——这也正是本轮从 712 修正为 736 的原因。
+> `quant-bridge` 与 `local-storage` 中共有 **6 个子测试需要真实 Python 解释器**（探测顺序见上）。
+> 探测不到时它们**自动跳过、测试仍然全绿**，表现为 quant-bridge 4 项（真实 7）、local-storage 22 项（真实 25），
+> 合计退化为 **715 项**（721 − 6）。因此引用"全通过"时必须同时给出运行环境与 Python 是否可用，
+> 否则数字对不上——这也正是本轮从 712 修正为 736（后又增至 748）的原因。
 
 **真实冒烟（需要网络 / 真实 GUI，单独跑，不并入上面的自动计数；本轮未复跑）**：
 `smoke-live.mjs`（腾讯行情）、`smoke-live2.mjs`（东财）、`smoke-tdx.mjs`（公式真实链路）、
