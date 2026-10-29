@@ -31,6 +31,7 @@ const TTL = {
   news: 300000,         // 新闻 5min
   sectorList: 15000,    // 板块列表 15s
   sector: 10000,        // 单个板块 10s
+  universe: 3600000,    // 全 A 股标的池 1h（5000+ 条，翻页抓取约 1–3s，别频繁拉）
 }
 
 export class MarketService {
@@ -282,6 +283,32 @@ export class MarketService {
   async getStockSector(input) {
     const info = normalize(input)
     return this.cache.get(`stockSector:${info.symbol}`, TTL.sector, () => eastmoney.getStockSector(info.symbol))
+  }
+
+  /** 全 A 股标的池（东财 clist，分页取全；缓存 1 小时） */
+  async getStockUniverse(opts = {}) {
+    return this.cache.get('stockUniverse', TTL.universe, () => eastmoney.getStockUniverse(opts))
+  }
+
+  // ── 本地历史库（只读；选股 / 研究用） ─────────────────────
+  //
+  // 为什么放在 MarketService：架构铁律是"只有 market-service 可以 import datasource/"。
+  // 选股引擎需要枚举本地库、读本地 K 线、算数据版本——都必须经这里，不能自己去 import。
+
+  /** 本地库已落库的标的列表（含行数/区间/来源） */
+  listLocalMeta() {
+    return local.listLocalMeta()
+  }
+
+  /** 本地库数据版本指纹（文件大小 + mtime；数据一变就变） */
+  localDataVersion(symbols, timeframe = '1d', adjust = 'qfq') {
+    return local.localDataVersion(symbols, timeframe, adjust)
+  }
+
+  /** 只读本地 K 线（不落网、不写盘；没有数据返回 null） */
+  getLocalKline(input, opts = {}) {
+    const info = normalize(input)
+    return local.getLocalKline(info.symbol, opts)
   }
 
   // ── 检索 ──────────────────────────────────────────────

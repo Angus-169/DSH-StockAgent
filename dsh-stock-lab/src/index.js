@@ -23,6 +23,7 @@ import { registerWatchTools } from './tools/watch-tools.js'
 import { registerFormulaTools } from './tools/formula-tools.js'
 import { registerDrawingTools } from './tools/drawing-tools.js'
 import { FormulaStore } from './services/formula-service/formula-store.js'
+import { ScreenService } from './services/screen-service/index.js'
 import { DrawingStore } from './services/drawing-service/drawing-store.js'
 import { WatchService } from './services/watch-service/index.js'
 import { ChatService } from './services/chat-service/index.js'
@@ -79,6 +80,14 @@ export function apply(ctx) {
     ctx.logger?.warn?.('stock-lab: 公式库初始化失败（TDX 公式功能不可用）%s', e?.message || e)
   }
 
+  // 公式选股引擎（T5.7）：只读本地库、分批求值、可取消
+  let screen = null
+  try {
+    screen = new ScreenService({ formulas, market, log: (m) => ctx.logger?.info?.('[screen] ' + m) })
+  } catch (e) {
+    ctx.logger?.warn?.('stock-lab: 选股引擎初始化失败 %s', e?.message || e)
+  }
+
   // 手工画线（图表标注）：JSON 落在数据根目录，便于备份、手工查看、以及被 AI 读写
   let drawings = null
   try {
@@ -118,7 +127,7 @@ export function apply(ctx) {
     if (research) registerResearchTools(toolRegistrar, research, market)
     registerQuantTools(toolRegistrar)
     if (watch) registerWatchTools(toolRegistrar, watch)
-    if (formulas) registerFormulaTools(toolRegistrar, formulas, market)
+    if (formulas) registerFormulaTools(toolRegistrar, formulas, market, screen)
     if (drawings) registerDrawingTools(toolRegistrar, drawings, market, stockContext)
   } catch (e) {
     ctx.logger?.warn?.('stock-lab: tool 注册失败 %s', e?.message || e)
@@ -563,6 +572,46 @@ export function apply(ctx) {
   route('/formula/capabilities', async () => {
     const { supportedFunctionNames } = await import('./services/formula-service/index.js')
     return { supportedFunctions: supportedFunctionNames(), stats: formulas ? formulas.stats() : null }
+  })
+
+  // ── 公式选股（T5.7）──
+  // ⚠️ 这里必须是「不可用才抛」，不是无条件抛：
+  // 曾经写成裸 `noScreen()`，结果 5 条路由 100% 报"选股引擎不可用"，
+  // 而单测只数路由条数、冒烟直连 service，全都发现不了。host.test 现在会真的调一次 handler。
+  const noScreen = () => { throw new Error('选股引擎不可用（初始化失败）') }
+  route('/formula/screen/universes', async () => {
+    if (!screen) noScreen()
+    const localPool = await screen.resolveUniverse('local', {})
+    let marketPool = null
+    try {
+      const u = await market.getStockUniverse()
+      marketPool = {
+        total: u.total, fetched: u.fetched, partial: u.partial,
+        failedPages: u.failedPages || 0, fetchedAt: u.fetchedAt,
+      }
+    } catch (e) {
+      marketPool = { error: e?.message || String(e) }
+    }
+    return { local: { total: localPool.total }, market: marketPool }
+  })
+  route('/formula/screen/start', async (_q, body) => {
+    if (!screen) noScreen()
+    return screen.start(body || {})
+  })
+  route('/formula/screen/status', async (q) => {
+    if (!screen) noScreen()
+    const id = String(q.id || q.jobId || '')
+    const s = screen.status(id)
+    if (!s) throw new Error('任务不存在：' + id)
+    return s
+  })
+  route('/formula/screen/cancel', async (_q, body) => {
+    if (!screen) noScreen()
+    return screen.cancel(String(body?.id || body?.jobId || ''))
+  })
+  route('/formula/screen/jobs', async () => {
+    if (!screen) noScreen()
+    return { jobs: screen.list() }
   })
 
   // ── Watch Engine（盯盘） ──

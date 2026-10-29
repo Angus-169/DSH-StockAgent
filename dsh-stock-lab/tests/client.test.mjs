@@ -450,6 +450,40 @@ t('信号以标记方式画在 K 线上（而非 0~1 的线）', () => {
   assert.ok(code.includes('▲'), '图例应说明信号标记的图形')
 })
 
+console.log('\n指标公式：公式选股 UI（T5.7）')
+const formulaPanelSrc = fnBody('FormulaPanel')
+t('选股入口与关键控件文案齐全', () => {
+  for (const s of ['开始选股', '停止', '只看最新一根', '不构成投资建议']) {
+    assert.ok(formulaPanelSrc.includes(s), 'FormulaPanel 缺少文案：' + s)
+  }
+})
+t('公式选股消费 4 个后端路由', () => {
+  for (const r of ['/formula/screen/universes', '/formula/screen/start', '/formula/screen/status', '/formula/screen/cancel']) {
+    assert.ok(formulaPanelSrc.includes(r), '未调用 ' + r)
+  }
+})
+t('选股进度按 400ms 轮询，并在结束时清理定时器', () => {
+  assert.match(formulaPanelSrc, /setInterval\([^)]*,\s*400\)/, '轮询间隔应为 400ms')
+  assert.ok(formulaPanelSrc.includes('clearInterval(timer)'), '缺少 clearInterval 清理')
+  assert.ok(/return \(\) => \{ alive = false; clearInterval\(timer\) \}/.test(formulaPanelSrc), 'effect 必须返回清理函数')
+})
+t('点击结果行切换标的：onPickSymbol 贯通到调用点 select', () => {
+  assert.ok(formulaPanelSrc.includes('onPickSymbol'), 'FormulaPanel 未接收 onPickSymbol')
+  assert.ok(formulaPanelSrc.includes('onPickSymbol(r.symbol'), '结果行未调用 onPickSymbol')
+  assert.ok(code.includes('onPickSymbol: select'), '公式面板调用点未传入 select')
+})
+t('结果表包含代码/名称/命中次数/最近命中日/收盘/涨跌', () => {
+  for (const col of ['代码', '名称', '命中次数', '最近命中日', '收盘', '涨跌']) {
+    assert.ok(formulaPanelSrc.includes(col), '结果表缺列：' + col)
+  }
+})
+t('空结果与缺数据都如实说明（不许把缺数据读成 0 命中）', () => {
+  assert.ok(formulaPanelSrc.includes('没有命中的标的'), '缺少空结果提示')
+  assert.ok(formulaPanelSrc.includes('只评估本地库有数据的标的'), '缺少评估口径提示')
+  assert.ok(formulaPanelSrc.includes('缺数据的 '), '缺少缺数据数量提示')
+  assert.ok(formulaPanelSrc.includes('collect_history'), '缺少补数据指引')
+})
+
 console.log('\n右栏 AI 对话：SSE 帧解析（真实会踩的坑都在这）')
 const { makeSseParser, CHAT_SUGGESTIONS } = mod.__test
 

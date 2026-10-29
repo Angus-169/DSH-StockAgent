@@ -42,7 +42,7 @@ const ctx = {
   skills: { register: (s) => skills.push(s) },
 }
 t('apply 不抛错', () => mod.apply(ctx))
-t('注册了 30 个 tool（9 行情 + 4 研究 + 3 量化 + 5 盯盘 + 6 公式 + 3 画线）', () => assert.equal(tools.length, 30))
+t('注册了 31 个 tool（9 行情 + 4 研究 + 3 量化 + 5 盯盘 + 7 公式 + 3 画线）', () => assert.equal(tools.length, 31))
 t('含画线工具（让 AI 能在图上画线/标注）', () => {
   const names = tools.map((x) => x.name)
   for (const n of ['save_drawing', 'list_drawings', 'delete_drawing']) {
@@ -70,9 +70,9 @@ t('含盯盘工具（含 digest）', () => {
     assert.ok(names.includes(n), '缺少 ' + n)
   }
 })
-t('含通达信公式工具', () => {
+t('含通达信公式工具（含选股 screen_formula）', () => {
   const names = tools.map((x) => x.name)
-  for (const n of ['import_formula', 'run_formula', 'list_formulas', 'delete_formula', 'import_formula_dir', 'tdx_capabilities']) {
+  for (const n of ['import_formula', 'run_formula', 'list_formulas', 'delete_formula', 'import_formula_dir', 'tdx_capabilities', 'screen_formula']) {
     assert.ok(names.includes(n), '缺少 ' + n)
   }
 })
@@ -82,7 +82,7 @@ t('注册了 stock-lab skill', () => {
   assert.ok(skills[0].content.includes('合规红线'))
   assert.equal(skills[0].source, 'bundled')
 })
-t('注册了 56 条路由', () => assert.equal(routes.length, 56))
+t('注册了 61 条路由', () => assert.equal(routes.length, 61))
 t('路由路径均以 /stock-lab 开头', () => {
   for (const r of routes) assert.ok(r.path.startsWith('/stock-lab'), r.path)
   assert.equal(routes[0].kind, 'exact')
@@ -95,6 +95,8 @@ t('包含关键路由', () => {
     '/stock-lab/watch/rules', '/stock-lab/watch/evaluate', '/stock-lab/watch/triggers',
     '/stock-lab/watch/pending', '/stock-lab/local/status', '/stock-lab/local/version',
     '/stock-lab/formula/list', '/stock-lab/formula/analyze', '/stock-lab/formula/import', '/stock-lab/formula/run',
+    '/stock-lab/formula/screen/start', '/stock-lab/formula/screen/status', '/stock-lab/formula/screen/cancel',
+    '/stock-lab/formula/screen/universes', '/stock-lab/formula/screen/jobs',
     '/stock-lab/chat/info', '/stock-lab/chat/send', '/stock-lab/chat/stream', '/stock-lab/chat/messages',
     // 删除接口保留：界面上没有入口（删对话在工作区里做），但脚本/测试仍需要
     '/stock-lab/chat/delete-thread',
@@ -159,6 +161,55 @@ await ta('health 路由返回插件信息', async () => {
   const json = JSON.parse(out)
   assert.equal(json.ok, true)
   assert.equal(json.data.plugin, 'stock-lab')
+})
+
+console.log('\n路由行为（选股路由要真的能调，不能只注册）')
+// 真实踩过的坑：5 条 screen 路由写成无条件 noScreen()，只要被调用就报"引擎不可用"。
+// 而测试只数了路由条数、冒烟直连 service，整组测试全绿也没发现。这条真的调一次 handler。
+await ta('formula/screen/jobs 返回 jobs 数组而不是"引擎不可用"', async () => {
+  const jobsRoute = routes.find((r) => r.path === '/stock-lab/formula/screen/jobs')
+  assert.ok(jobsRoute, '缺少 /formula/screen/jobs 路由')
+  let out = ''
+  const res = { statusCode: 0, setHeader() {}, end: (b) => { out = b } }
+  await jobsRoute.handler({ url: '/stock-lab/formula/screen/jobs', method: 'GET' }, res)
+  const json = JSON.parse(out)
+  assert.equal(json.ok, true, '选股路由不应报错：' + out)
+  assert.ok(Array.isArray(json.data.jobs), '应返回 jobs 数组')
+})
+
+await ta('formula/screen/start → status 真的跑通引擎（含请求体解析）', async () => {
+  const startRoute = routes.find((r) => r.path === '/stock-lab/formula/screen/start')
+  const statusRoute = routes.find((r) => r.path === '/stock-lab/formula/screen/status')
+  assert.ok(startRoute && statusRoute, '缺少 screen start/status 路由')
+  const body = JSON.stringify({ text: 'XG:CLOSE>MA(CLOSE,20);', universe: 'local', latestOnly: true })
+  const req = {
+    method: 'POST',
+    url: '/stock-lab/formula/screen/start',
+    async *[Symbol.asyncIterator]() { yield Buffer.from(body) },
+  }
+  let out = ''
+  const res = { statusCode: 0, setHeader() {}, end: (b) => { out = b } }
+  await startRoute.handler(req, res)
+  const started = JSON.parse(out)
+  assert.equal(started.ok, true, 'start 应成功：' + out)
+  assert.ok(started.data.id, '应返回任务 id')
+
+  const deadline = Date.now() + 20000
+  let job = started.data
+  while (job.state === 'running' && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 100))
+    let sout = ''
+    await statusRoute.handler(
+      { method: 'GET', url: '/stock-lab/formula/screen/status?id=' + encodeURIComponent(job.id) },
+      { statusCode: 0, setHeader() {}, end: (b) => { sout = b } },
+    )
+    const sj = JSON.parse(sout)
+    assert.equal(sj.ok, true, 'status 应成功：' + sout)
+    job = sj.data
+  }
+  assert.notEqual(job.state, 'running', '任务应在 20s 内结束')
+  assert.ok(['done', 'cancelled', 'failed'].includes(job.state), '任务状态异常：' + job.state)
+  assert.equal(typeof job.progress.done, 'number')
 })
 
 console.log('\n架构铁律检查')

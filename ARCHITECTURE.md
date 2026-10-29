@@ -227,8 +227,8 @@ MarketOverview {
 
 ## 5. AI Tools 设计（MVP 8 个，稳定优先）
 
-> **实现现状（2026-10-27）**：当前共 **30 个工具**（`src/tools/` 六个模块注册：index 9 + research 4 +
-> watch 5 + quant 3 + formula 6 + drawing 3；清单见 ROADMAP T6.2 与插件 README）。
+> **实现现状（2026-10-29）**：当前共 **31 个工具**（`src/tools/` 六个模块注册：index 9 + research 4 +
+> watch 5 + quant 3 + formula 7 + drawing 3；清单见 ROADMAP T6.2 与插件 README）。
 > 下表是 MVP 的 8 个核心工具，**仍在用**；但本节的"追加"清单不等于已支持——见下表后的现状注记。
 
 | Tool | 输入 | 输出要点 |
@@ -244,11 +244,11 @@ MarketOverview {
 
 Phase 3+ 追加：`stock_money_flow / compare_stocks / market_breadth / screen_stocks / run_event_study / run_regression / run_backtest / save_research_note / create_watch_rule`。
 
-> **其中仍未实现（2026-10-27 实测）**：`compare_stocks` / `market_breadth` / `screen_stocks`
-> ——选股属 ROADMAP **T5.7 ⬜**（信号提取接口已就绪，全市场批量求值未做）；
+> **仍未实现（2026-10-29 更新）**：`compare_stocks` / `market_breadth`；
+> `screen_stocks` 这个**规划名已由 `screen_formula` 实现**（T5.7 ✅ 2026-10-29：本地库/自选/全市场选股 + 5 条 `/formula/screen/*` 路由，设计见 §13.1）；
 > `run_regression` / `run_backtest` ——回归与回测属 🧊 **范围冻结**（保留可用、不再扩展的是 Event Study）。
 > **已实现**：`stock_money_flow`、`run_event_study`、`save_research_note`、`create_watch_rule`，
-> 以及后续加入的公式（6）、画线（3）、盯盘（5）、笔记（4）类工具，合计 30（见本节开头的实现现状）。
+> 以及公式（7，含 `screen_formula`）、画线（3）、盯盘（5）、笔记（4）类工具，合计 **31**（见本节开头的实现现状）。
 
 ---
 
@@ -724,7 +724,7 @@ updater 何时执行由 React 决定，写进去会导致"栈非空却提示没�
 - `GenerateOptions` 支持 `messages`、`system`、**`tools: ToolSchema[]`**、`temperature`、`maxTokens`、`signal`
 - `ctx.get('agentDefaultModel').currentSelection()` 给出 provider/model → **不需要插件自配 API Key**
 
-所以自建对话框是可行的，并且有一个原方案没有的好处：**我们已有的 30 个工具就在本进程内，聊天可以直接调用它们的 `execute`，不需要经过 agent 层**。详见 §12。
+所以自建对话框是可行的，并且有一个原方案没有的好处：**我们已有的 31 个工具就在本进程内，聊天可以直接调用它们的 `execute`，不需要经过 agent 层**。详见 §12。
 
 ---
 
@@ -758,7 +758,7 @@ updater 何时执行由 React 决定，写进去会导致"栈非空却提示没�
 ```
 system     = skill.md 的合规与方法论 + 当前标的事实底座（snapshot 摘要）
 messages   = [线程摘要] + [最近 N 轮原始消息] + [本次提问]
-tools      = 本插件自有的 30 个工具 schema（`src/tools/` 六个模块注册，见 ROADMAP T6.2）
+tools      = 本插件自有的 31 个工具 schema（`src/tools/` 六个模块注册，见 ROADMAP T6.2）
 ```
 
 **多轮工具循环**：收到 `tool-call-delta` → 拼参数 → 调本进程的工具 `execute` → 把结果作为 tool message 回灌 → 继续流式，最多 K 轮（防止无限循环），每轮都可取消。
@@ -872,6 +872,33 @@ DSH 真实会话（cwd = 工作区目录）   ← 持久、工作区里（重启
 ### 诚实的边界
 
 这是一个**兼容子集**，不是完整通达信。遇到不支持的语法要**明确指出是哪一行哪个函数**，而不是算出一个看起来像但实际错误的结果。
+
+### 13.1 公式选股（T5.7，2026-10-29）
+
+**做什么**：把一条条件公式在标的池上批量求值，返回命中的标的。
+
+**四个决定（每个都有理由）**：
+
+| 决定 | 理由 |
+|---|---|
+| **只读本地库，不联网** | 选股要可复现、可离线；5,000 只逐个走实时接口既慢又不稳定（且日线上游只有约 800 根）。所以"能不能选全市场"实际取决于"本地库有没有数据" |
+| **缺数据单独计数，不静默跳过** | "5,000 只里只算了 4 只"却显示"命中 4 只"，会被读成"全市场只有 4 只满足"——这是最危险的误导。返回固定给 `universe{total, evaluated, missingData, note}` |
+| **分批 + 让出事件循环** | 实测全链路 0.7–0.9 ms/标的（500 根），5,000 只约 4–15 秒。每批 40 个后 `setImmediate`，期间 UI 能轮询进度、能取消；不做就会把宿主进程卡住 |
+| **结果按"公式 + 参数 + 数据版本"缓存** | 数据版本 = 文件大小 + mtime 指纹（与 Research Note 同一套）；数据一变缓存自然失效，不会拿旧结果骗人 |
+
+**实测性能（本机，500 根/标的）**：
+
+| 环节 | 单标的 | 5,000 标的 |
+|---|---|---|
+| 读本地 K 线（冷 / 热） | 3.0 / 0.4 ms | 15 / 2 s |
+| 求值 简单 / MACD / 多条件 | 0.10 / 0.21 / 0.41 ms | 0.5 / 1.0 / 2.1 s |
+| 全链路（读 + 算 + 提信号） | 0.7–0.9 ms | **约 4 s** |
+
+**安全判定复用 `signalsFrom`**：最后一条输出线必须是 0/1/null；指标公式（如 `MA5:MA(C,5);`）直接失败并说明原因——绝不会把每条均线值都当成"命中"。
+
+**AI 可用**：`screen_formula` 工具，返回命中 / 评估 / 缺数据三个数，并附免责声明。
+
+**真实规模（2026-10-29 实测）**：东财全 A 股标的池 **5,563 只**；`pz` 上限是 100（传 6000 也只回 100），必须翻页 56 页——并发 6 约 **0.6–0.7 秒**。本地库当前只有 4 只个股（+1 指数），所以"全市场选股"目前实际只评估 4 只、缺数据 5,559 只，**这个数字必须在界面上如实显示**。
 
 ---
 

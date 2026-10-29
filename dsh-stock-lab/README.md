@@ -24,8 +24,8 @@
 | 新浪备源（日线 fallback） | ✅ 已接入 |
 | 东财适配器（宽度/资金流/财务/概况/新闻） | ✅ 真实接口验证 |
 | TTL 缓存 + single-flight | ✅ 4 项单测（与上面 15 项同属 `market-service.test.mjs`，**本套共 19 项**） |
-| AI Tools | ✅ **30 个**（行情 9 / 研究 4 / 量化 3 / 盯盘 5 / 通达信 6 / 图表标注 3），`tools.test` 11 项 |
-| Host 入口 + HTTP 路由 | ✅ **56 条**路由；`host.test` 23 项契约与架构铁律测试 |
+| AI Tools | ✅ **31 个**（行情 9 / 研究 4 / 量化 3 / 盯盘 5 / 通达信 7 / 图表标注 3），`tools.test` 11 项 |
+| Host 入口 + HTTP 路由 | ✅ **61 条**路由；`host.test` 25 项契约与架构铁律测试 |
 | StockContext（UI 状态 → LLM） | ✅ 已实现 |
 | stock-lab skill（合规 + 方法论） | ✅ 已实现 |
 | Client UI 工作台 | ✅ 已实现并在 DSH GUI 验证，且经用户多轮实测反馈迭代（2026-10-25 ~ 10-27） |
@@ -39,7 +39,7 @@
 | **Quant UI** | ✅ 条件/参数选择 + 结果显著性展示 + 一键存笔记 |
 | **Watch Engine（智能盯盘）** | ✅ 9 种条件 + 触发记录 + 冷却 + 周期评估 + 与笔记联动 |
 | Watch UI | ✅ 规则管理 + 立即评估 + 触发列表 + 确认 |
-| **通达信公式引擎** | ✅ 解析/求值/未来函数检测/导入通道（**29 个可计算函数 + 7 个序列变量名**，后者对应 **6 个序列**，`V` 与 `VOL` 同指成交量）+ **主图叠加/副图/「指标公式」tab**；**选股（T5.7）待做** |
+| **通达信公式引擎** | ✅ 解析/求值/未来函数检测/导入通道（**29 个可计算函数 + 7 个序列变量名**，后者对应 **6 个序列**，`V` 与 `VOL` 同指成交量）+ **主图叠加/副图/「指标公式」tab** + **公式选股（T5.7）** |
 | **K 线交互（D18）** | ✅ 缓冲区 800 根 + 可视窗口模型：缩放/平移/滚轮以指针为锚/翻页/点 K 线钉住读数/框选放大 |
 | **图表画线（D19）** | ✅ 水平线/趋势线/圆/标记 + 吸附 + Ctrl+Z 撤销 + 测幅；**AI 可画**（3 个工具） |
 | **右栏 Chat** | ✅ 数据层 + LLM 工具循环 + 右栏 UI（打真实 LLM 冒烟通过）；二层真实会话（T6.5）待做 |
@@ -206,7 +206,23 @@ XG:CROSS(MA5,MA20) AND 放量;
 
 **当前范围：只支持技术面选股**（基于 K 线序列）。含 `FINANCE`/`CAPITAL`/`DYNAINFO` 的基本面选股公式**无法运行**，会明确告知原因与替代路径。
 
-> 批量选股（跨全市场跑一个条件公式）尚未实现，见 ROADMAP T5.7。
+### 公式选股（T5.7，2026-10-29）
+
+在「指标公式」tab 选中一个公式 → 点「选股」→ 选标的池（本地库 / 自选股 / 全市场）→ 开始。
+
+- **只读本地库，不联网**：选股可复现、可离线。**缺数据的标的单独计数**，不会静默跳过——
+  界面上固定显示「缺数据 N 只未参与计算」，因为"5,000 只只算了 4 只"和"全市场只有 4 只命中"是两回事
+- **进度 + 可取消**：每批 40 个让出一次事件循环，5,000 只约 4–15 秒；期间能看进度、能中止，不卡界面
+- **结果缓存**：公式 + 参数 + 数据版本（文件大小+mtime）相同 → 直接复用，数据一变自动失效
+- **结果表**：代码 / 名称 / 命中次数 / 最近命中日 / 收盘 / 涨跌；点一行直接切到该标的
+
+实测（本机，500 根/标的）：读盘 3.0 ms（冷）/ 0.4 ms（热），求值 0.10–0.41 ms/标的，
+**全链路 0.7–0.9 ms/标的 → 5,000 只约 4 秒**。全市场标的池取自东财 clist：**5,563 只 / 56 页 / 并发 6 约 0.6 秒**（`pz` 上限 100，传 6000 也只回 100）。
+
+> ⚠️ 当前本地库只有 4 只个股（+ 1 指数），所以「全市场选股」实际只评估 4 只、**缺数据 5,559 只**。
+> 想真正覆盖全市场，得先分批用 `collect_history` 把日线落库——这是数据量问题，不是选股引擎的问题。
+
+对话里等价能力：`screen_formula(formulaId|name|text, universe, symbols?, latestOnly?)`。
 
 ### 工具与命令
 
@@ -217,6 +233,7 @@ import_formula(name="我的公式", filePath="C:/公式/macd.txt")
 import_formula_dir(dirPath="C:/公式/")        # 批量，逐个报告成功/失败原因
 run_formula(name="MACD标准", symbol="600519", tail=10)
 list_formulas(symbol="600519")
+screen_formula(name="金叉放量选股", universe="local", latestOnly=true)   # 选股（T5.7）
 tdx_capabilities()                            # 查能力边界
 ```
 
@@ -267,7 +284,7 @@ MACD标准      → 3 条输出线，DIF=12.61 / DEA=5.13 / MACD=14.95，来源=
 
 **但插件可以自己调 LLM**：`ctx.llm.stream()` 支持 `tools` 与 `tool-call-delta`，
 用 `agentDefaultModel` 当前选型，**不需要 API Key**。于是自建，而且有个官方会话没有的好处：
-**30 个工具就在本进程内，可以直接调 `execute`**，不必经过 agent 层。
+**31 个工具就在本进程内，可以直接调 `execute`**，不必经过 agent 层。
 
 ### 三条刻意的设计约束
 
@@ -742,15 +759,16 @@ DSH 的字体设置一起变，配色跟随明暗主题：
 # Node 侧
 node tests/market-service.test.mjs   # 19 项，纯离线
 node tests/tools.test.mjs            # 11 项，纯离线（假 market）
-node tests/host.test.mjs             # 23 项，契约 + 架构铁律
-node tests/client.test.mjs           # 310 项，bundle 契约 + 渲染 + 无硬编码色
+node tests/host.test.mjs             # 25 项，契约 + 架构铁律 + 选股路由可调用
+node tests/client.test.mjs           # 316 项，bundle 契约 + 渲染 + 无硬编码色
 node tests/research.test.mjs         # 18 项，研究笔记存储层
 node tests/research-tools.test.mjs   # 14 项，研究类 AI Tools
 node tests/quant-bridge.test.mjs     #  7 项（Python 不可用时自动跳过 3 项 → 4 项）
 node tests/watch.test.mjs            # 39 项，盯盘条件求值 + 规则存储 + 冷却 + digest
 node tests/local-storage.test.mjs    # 25 项（Python 不可用时跳过 3 项 → 22 项）
 node tests/tdx.test.mjs              # 61 项，TDX 解析/求值语义/诊断/未来函数
-node tests/formula-store.test.mjs    # 42 项，公式库 + 公式工具 + lossless-JSON 校验
+node tests/formula-store.test.mjs    # 43 项，公式库 + 公式工具 + lossless-JSON 校验
+node tests/screen-service.test.mjs   # 11 项，公式选股引擎（命中/缺数据/取消/缓存/标的池）
 node tests/drawing-store.test.mjs    # 30 项，画线持久化（锚点/复权/损坏文件都不静默）
 node tests/chat-store.test.mjs        # 32 项，对话数据层（线程/消息/摘要/懒创建）
 node tests/chat-service.test.mjs      # 30 项，ChatService（白名单/系统提示词/落库/懒创建）
@@ -760,6 +778,7 @@ node tests/validate-resources.mjs    # 13 项，展示资源（locale/icon）与
 node tests/smoke-live.mjs            # 真实网络冒烟（腾讯）+ 字段合理性断言
 node tests/smoke-live2.mjs           # 真实网络冒烟（东财）
 node tests/smoke-tdx.mjs             # TDX 引擎在真实 K 线上的冒烟
+node tests/smoke-screen.mjs          # 公式选股：真东财标的池 + 真本地库（9 项检查）
 node tests/smoke-chat.mjs            # 右栏 Chat 真实链路冒烟（打真实 LLM，11 项检查）
 node tests/smoke-chat-ui.mjs         # 右栏 UI 调用路径冒烟（含停止/清空，15 项检查）
 
@@ -768,10 +787,10 @@ python backend/tests/test_storage.py       # 18 项，存储层 + 数据根解�
 python backend/tests/test_event_study.py   #  9 项，事件研究
 ```
 
-合计 **JS 721 项 + Python 27 项 = 748 项自动化测试**（2026-10-28 实跑复核），另有 5 套真实冒烟（网络 ×2、真实 K 线 ×1、真实 LLM ×2）**不并入计数**。
+合计 **JS 741 项 + Python 27 项 = 768 项自动化测试**（2026-10-29 实跑复核），另有 6 套真实冒烟（网络 ×2、真实 K 线 ×1、公式选股 ×1、真实 LLM ×2）**不并入计数**。
 
 > ⚠️ **同一个数字是环境相关的，不是恒定值**：`quant-bridge`（3 项）与 `local-storage`（3 项）里有 6 个断言需要真的启动 Python 解释器，
-> 探测不到时会**自动跳过并在输出里写明**，总数随之变成 **715**（16 套 = 702 + 资源校验 13）。
+> 探测不到时会**自动跳过并在输出里写明**，总数随之变成 **735**（17 套 = 722 + 资源校验 13）。
 > 所以**报数字时必须带上前提**；复跑请从插件目录执行（`cd dsh-stock-lab` 再 `node tests/xxx.mjs`）。
 
 > **测试不得留垃圾**：临时目录清理统一走 `tests/cleanup.mjs`（重试 + **失败要出声**）。
@@ -966,7 +985,7 @@ UI 状态（当前股票、周期、区间、基准）自动上报，AI 对话�
 - `ctx.set()` 需要插件声明 `export const provide`，否则启动报 `cannot set property ... without provide`。不需跨插件共享时，直接用闭包持有实例。
 - **`ctx.tools` / `ctx.skills` 只有在 `inject` 里声明后才存在。** 只写 `inject: ['webServer']` 时 `apply` 里 `ctx.tools === undefined`，AI Tools 会静默注册失败——界面正常但 AI 完全用不了。现已加 `tools`、`skills` 并配回归测试。
 - 验证注册是否生效（不要只看 UI）：
-  - `cordis_inspect_query` → host `Tool.listTools`，应能看到全部 **30 个** `stock_*` / 其它本插件工具（少一个都说明注册装配出了问题）
+  - `cordis_inspect_query` → host `Tool.listTools`，应能看到全部 **31 个** `stock_*` / 其它本插件工具（少一个都说明注册装配出了问题）
   - 会话可用 skill 目录里应出现 `stock-lab`
   - 直接调一次 `stock_quote` 或 `stock_research_snapshot`
 - 改 Host 代码后必须 remove + install 重装才生效（`lib`/`src` 的 Host 半边不在 HMR 范围）；Client 半边（`src/client.js`）由 HMR 推送，刷新页面即可。

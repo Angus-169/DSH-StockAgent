@@ -1,4 +1,4 @@
-﻿/**
+/**
  * formula-store.test.mjs — 公式库 + 公式工具测试（临时库 + 假 market，纯离线）
  * 运行：node tests/formula-store.test.mjs
  */
@@ -140,15 +140,38 @@ await t('目录扫描区分可导入与不可导入', () => {
 console.log('\n公式工具（假 market）')
 const tools = []
 const ctx = { logger: { info() {}, warn() {}, error() {} }, tools: { register: (d) => tools.push(d) } }
-const n = registerFormulaTools(ctx, store, fakeMarket)
+// 选股引擎桩：只验证 screen_formula 的编排与返回形状（真实引擎另有 screen-service.test.mjs）
+const fakeScreen = {
+  async start() { return { id: 'job-1' } },
+  async waitFor() {
+    return {
+      id: 'job-1', state: 'done',
+      formula: { id: null, name: '（临时公式）' },
+      universe: { source: 'local', total: 2, evaluated: 2, missingData: 0, note: '本地库已落库的标的' },
+      params: { timeframe: '1d', adjust: 'qfq', count: 500, latestOnly: false },
+      progress: { total: 2, done: 2, hit: 1, missing: 0, failed: 0 },
+      elapsedMs: 12, cached: false, error: null, resultsTruncated: false,
+      results: [{ symbol: 'SH600519', name: null, hitCount: 3, lastHitDate: '2026-10-20', lastHitIndex: 499, close: 1335, changePct: 1.25 }],
+    }
+  },
+}
+const n = registerFormulaTools(ctx, store, fakeMarket, fakeScreen)
 const byName = (nm) => tools.find((x) => x.name === nm)
 
-await t('注册 6 个公式工具', () => assert.equal(n, 6))
+await t('注册 7 个公式工具', () => assert.equal(n, 7))
 await t('工具名单正确', () => {
   assert.deepEqual(tools.map((x) => x.name).sort(), [
     'delete_formula', 'import_formula', 'import_formula_dir',
-    'list_formulas', 'run_formula', 'tdx_capabilities',
+    'list_formulas', 'run_formula', 'screen_formula', 'tdx_capabilities',
   ])
+})
+
+await t('screen_formula：返回命中/汇总/免责声明', async () => {
+  const r = await byName('screen_formula').execute({ text: 'XG:CLOSE>MA(CLOSE,20);', universe: 'local', limit: 10 })
+  assert.equal(r.ok, true)
+  assert.equal(r.progress.hit, 1)
+  assert.equal(r.results[0].symbol, 'SH600519')
+  assert.match(r.disclaimer, /不构成投资建议/)
 })
 
 await t('import_formula：粘贴文本并试算', async () => {
@@ -300,6 +323,7 @@ await t('所有工具返回值递归不含 undefined', async () => {
     ['tdx_capabilities', {}],
     ['run_formula', { name: '测试MA', symbol: '600519' }],
     ['run_formula', { name: '不存在', symbol: '600519' }],
+    ['screen_formula', { text: 'XG:CLOSE>MA(CLOSE,20);', universe: 'local' }],
   ]
   for (const [toolName, args] of cases) {
     let res

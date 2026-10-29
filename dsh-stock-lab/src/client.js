@@ -73,6 +73,12 @@ window.__ModuleLoader__.load({
     const LS_WATCH = 'stock-lab:watchlist'
     const LS_LAST = 'stock-lab:last'
     const LS_RIGHT = 'stock-lab:rightPane'
+    /** 默认自选股：localStorage 尚未写入时侧栏展示这三只；公式选股的「自选股」池也复用同一默认值 */
+    const DEFAULT_WATCH = [
+      { symbol: 'SH600519', name: '贵州茅台' },
+      { symbol: 'SZ300750', name: '宁德时代' },
+      { symbol: 'SZ000001', name: '平安银行' },
+    ]
 
     // 右栏尺寸约束：不同显示器与 DSH 窗口尺寸差异很大，因此宽度由用户拖拽决定。
     // 上限同时受容器宽度限制（见 clampPaneWidth），避免在窄窗口里把图表挤没。
@@ -1099,6 +1105,15 @@ window.__ModuleLoader__.load({
   transition:opacity 200ms ease;
 }
 .sl-pane-size-off{opacity:0}
+/* ── 公式选股（T5.7）：进度条与结果表 ──
+ * 只用主题 token：进度条轨道/填充都跟随明暗主题，不写死颜色。 */
+.sl-screen-bar{height:6px;border-radius:999px;background:var(--dsw-alias-bg-layer-2);overflow:hidden;margin:4px 0 8px}
+.sl-screen-bar-fill{height:100%;background:var(--dsw-alias-brand-primary);border-radius:999px;transition:width 200ms ease}
+.sl-screen-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
+.sl-screen-table th{text-align:left;font-weight:600;color:var(--dsw-alias-label-secondary);font-size:11px;padding:4px 8px;border-bottom:1px solid var(--dsw-alias-border-l2);white-space:nowrap}
+.sl-screen-table td{padding:5px 8px;border-bottom:1px solid var(--dsw-alias-border-l1);font-variant-numeric:tabular-nums}
+.sl-screen-table tbody tr{cursor:pointer}
+.sl-screen-table tbody tr:hover{background:var(--dsw-alias-bg-layer-2)}
 `
 
     // ─────────────────────────── 工具函数 ───────────────────────────
@@ -2238,11 +2253,7 @@ window.__ModuleLoader__.load({
 
     // ─────────────────────────── 自选股 + 搜索 ───────────────────────────
     function Sidebar({ current, onSelect }) {
-      const [watch, setWatch] = useLocal(LS_WATCH, [
-        { symbol: 'SH600519', name: '贵州茅台' },
-        { symbol: 'SZ300750', name: '宁德时代' },
-        { symbol: 'SZ000001', name: '平安银行' },
-      ])
+      const [watch, setWatch] = useLocal(LS_WATCH, DEFAULT_WATCH)
       const [q, setQ] = useState('')
       const [sugg, setSugg] = useState([])
       const [busy, setBusy] = useState(false)
@@ -3602,6 +3613,7 @@ window.__ModuleLoader__.load({
                     onImport: importFormula,
                     importMsg: formulaImportMsg,
                     importing: formulaImporting,
+                    onPickSymbol: select,
                   })
                   : tab === 'quant'
                   ? h(QuantPanel, { symbol: current.symbol, name: quote?.name || current.name, onSaved: refreshNotes })
@@ -4138,8 +4150,217 @@ window.__ModuleLoader__.load({
 
     // ─────────────────────────── 指标公式面板 ───────────────────────────
     function FormulaPanel({ symbol, applied, onToggle, onRefresh, formulas, runs, loading,
-                            importText, setImportText, importName, setImportName, onImport, importMsg, importing }) {
+                            importText, setImportText, importName, setImportName, onImport, importMsg, importing,
+                            onPickSymbol }) {
       const [open, setOpen] = useState(false)
+      // ── 公式选股（T5.7）──
+      // 选中的公式（{ id, name }）；有值时在公式列表上方展示选股区。
+      const [screenFormula, setScreenFormula] = useState(null)
+      const [universe, setUniverse] = useState('local')
+      const [latestOnly, setLatestOnly] = useState(false)
+      const [universes, setUniverses] = useState(null)
+      const [job, setJob] = useState(null)
+      const [starting, setStarting] = useState(false)
+      const [cancelling, setCancelling] = useState(false)
+      const [screenMsg, setScreenMsg] = useState(null)
+      const [pollErr, setPollErr] = useState(null)
+
+      // 标的池规模/全市场抓取是否完整：启动前先如实展示，避免把"本地库只有几只"误当全市场
+      useEffect(() => {
+        let alive = true
+        apiFetch('/formula/screen/universes')
+          .then((d) => { if (alive) setUniverses(d) })
+          .catch((e) => { if (alive) setUniverses({ error: e.message }) })
+        return () => { alive = false }
+      }, [])
+
+      // running 时每 400ms 轮询一次状态；任务结束（done/cancelled/failed）或组件卸载时必须清掉定时器
+      useEffect(() => {
+        const id = job && job.id
+        if (!id || job.state !== 'running') return undefined
+        let alive = true
+        let fails = 0
+        const tick = async () => {
+          try {
+            const d = await apiFetch('/formula/screen/status', { id })
+            if (!alive) return
+            fails = 0
+            setPollErr(null)
+            setJob(d)
+          } catch (e) {
+            if (!alive) return
+            fails += 1
+            if (fails >= 3) {
+              setJob((prev) => (prev && prev.id === id ? { ...prev, state: 'failed', error: e.message } : prev))
+            } else {
+              setPollErr('状态获取失败，重试中：' + e.message)
+            }
+          }
+        }
+        const timer = setInterval(tick, 400)
+        return () => { alive = false; clearInterval(timer) }
+      }, [job && job.id, job && job.state])
+
+      // 自选股存的是 [{symbol,name}]（见 Sidebar 的 useLocal(LS_WATCH, ...)）；也兼容纯字符串数组
+      const watchSymbols = () => {
+        try {
+          const saved = localStorage.getItem(LS_WATCH)
+          const raw = saved ? JSON.parse(saved) : DEFAULT_WATCH
+          if (!Array.isArray(raw)) return []
+          return raw.map((x) => (typeof x === 'string' ? x : x && x.symbol)).filter(Boolean)
+        } catch { return [] }
+      }
+
+      const postJson = async (path, body) => {
+        const r = await fetch(API + path, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body || {}),
+        })
+        const j = await r.json()
+        if (!j.ok) throw new Error(j.error || '请求失败')
+        return j.data
+      }
+
+      const startScreen = async () => {
+        if (!screenFormula) return
+        setStarting(true); setScreenMsg(null); setPollErr(null)
+        try {
+          const body = { formulaId: screenFormula.id, universe, latestOnly }
+          if (universe === 'watchlist') body.symbols = watchSymbols()
+          const d = await postJson('/formula/screen/start', body)
+          setJob(d)
+        } catch (e) { setScreenMsg('启动选股失败：' + e.message) }
+        finally { setStarting(false) }
+      }
+
+      const stopScreen = async () => {
+        if (!job || !job.id) return
+        setCancelling(true); setScreenMsg(null)
+        try {
+          const d = await postJson('/formula/screen/cancel', { id: job.id })
+          if (d && d.ok === false) setScreenMsg(d.error || '取消失败')
+          // 立刻刷新一次，不必等下一个 400ms 轮询
+          try {
+            const s = await apiFetch('/formula/screen/status', { id: job.id })
+            if (s) setJob(s)
+          } catch { /* 状态查询失败时交给轮询继续重试 */ }
+        } catch (e) { setScreenMsg('取消失败：' + e.message) }
+        finally { setCancelling(false) }
+      }
+
+      const running = !!(job && job.state === 'running')
+      const uni = job && job.universe
+      const prog = (job && job.progress) || { total: 0, done: 0, hit: 0, missing: 0, failed: 0 }
+      // 后端 progress.hit 只在任务结束时写入；运行中先用 results.length 兜底，避免进度条旁一直显示 0 命中
+      const hitNow = Math.max(prog.hit || 0, Array.isArray(job && job.results) ? job.results.length : 0)
+      const elapsedSec = job && typeof job.elapsedMs === 'number' ? (job.elapsedMs / 1000).toFixed(1) : '0.0'
+      const pct = prog.total > 0 ? Math.min(100, Math.round((prog.done / prog.total) * 100)) : 0
+      const fromCache = !!(job && (job.cached === true || job.state === 'cached'))
+      const missingHint = !!(uni && uni.source === 'market' && uni.missingData > 0
+        && uni.missingData >= (uni.total || 0) / 2)
+      // market 池的 note 本身已含「缺数据的 N 只未参与计算」，避免重复拼接
+      const uniNote = uni && uni.note && !String(uni.note).includes('缺数据的') ? ' ' + uni.note : ''
+      const watchCount = universe === 'watchlist' ? watchSymbols().length : 0
+
+      // 选股区（选中公式后出现在公式列表上方）
+      const screenArea = screenFormula ? h('div', {
+        style: { border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 8, padding: 10, marginBottom: 10 },
+      },
+        h('div', { className: 'sl-toolbar', style: { marginBottom: 8, flexWrap: 'wrap' } },
+          h('span', { style: { fontWeight: 600 } }, '公式选股'),
+          h('span', { className: 'sl-note' }, '公式：' + screenFormula.name),
+          h('button', {
+            className: 'sl-btn', style: { marginLeft: 'auto' }, disabled: running,
+            title: running ? '任务运行中，先停止再收起' : '收起选股区',
+            onClick: () => { setScreenFormula(null); setJob(null); setScreenMsg(null); setPollErr(null) },
+          }, '收起')
+        ),
+        // 标的池 / 只看最新一根 / 开始-停止
+        h('div', { className: 'sl-toolbar', style: { marginBottom: 6, flexWrap: 'wrap' } },
+          h('span', { className: 'sl-note' }, '标的池'),
+          ...[['local', '本地库'], ['watchlist', '自选股'], ['market', '全市场']].map(([k, label]) =>
+            h('button', {
+              key: k,
+              className: 'sl-btn' + (universe === k ? ' sl-btn-on' : ''),
+              disabled: running,
+              title: k === 'watchlist' ? '用左侧自选股（LS_WATCH）作为标的池' : (k === 'market' ? '全市场（只评估本地库有数据的标的）' : '本地历史库已落库的标的'),
+              onClick: () => { setUniverse(k); setJob(null); setScreenMsg(null) },
+            }, label)
+          ),
+          h('label', { className: 'sl-note', style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
+            h('input', {
+              type: 'checkbox', checked: latestOnly, disabled: running,
+              onChange: (e) => setLatestOnly(e.target.checked),
+            }),
+            '只看最新一根'
+          ),
+          h('button', {
+            className: 'sl-btn' + (running ? '' : ' sl-btn-on'),
+            disabled: starting || cancelling,
+            onClick: running ? stopScreen : startScreen,
+          }, running ? '停止' : (job && job.state === 'failed' ? '重新开始' : '开始选股'))
+        ),
+        // 标的池规模 / 抓取完整性（如实展示，不粉饰）
+        h('div', { className: 'sl-note', style: { marginBottom: 6, lineHeight: 1.7 } },
+          !universes ? '加载标的池信息…'
+            : universes.error ? '标的池加载失败：' + universes.error
+              : `本地库 ${universes.local?.total ?? 0} 只 · 全市场 ${universes.market?.total ?? 0} 只`
+                + (universes.market?.error ? `（全市场标的池不可用：${universes.market.error}）` : '')
+                + (universes.market?.partial ? `（抓取不完整：已抓 ${universes.market.fetched ?? 0}/${universes.market.total ?? 0}，失败 ${universes.market.failedPages || 0} 页，结果可能漏标的）` : '')
+        ),
+        universe === 'watchlist' && watchCount === 0 && !running
+          ? h('div', { className: 'sl-note', style: { marginBottom: 6 } }, '自选股为空：请先在左侧搜索并加入自选股。')
+          : null,
+        screenMsg ? h('div', { className: 'sl-note', style: { color: 'var(--dsw-alias-state-warn-primary)', marginBottom: 6 } }, screenMsg) : null,
+        pollErr ? h('div', { className: 'sl-note', style: { color: 'var(--dsw-alias-state-warn-primary)', marginBottom: 6 } }, pollErr) : null,
+
+        job ? h('div', null,
+          h('div', { className: 'sl-note', style: { marginBottom: 4 } },
+            `已评估 ${prog.done}/${prog.total} · 命中 ${hitNow} · 缺数据 ${prog.missing} · ${elapsedSec}s`
+            + (prog.failed ? ` · 失败 ${prog.failed}` : '')
+            + (fromCache ? ' · 来自缓存' : '')
+          ),
+          h('div', {
+            className: 'sl-screen-bar', role: 'progressbar',
+            'aria-valuemin': 0, 'aria-valuemax': prog.total || 0, 'aria-valuenow': prog.done || 0,
+            title: `进度 ${pct}%`,
+          }, h('div', { className: 'sl-screen-bar-fill', style: { width: pct + '%' } })),
+          uni ? h('div', { className: 'sl-note', style: { marginBottom: 4, lineHeight: 1.7 } },
+            `只评估本地库有数据的标的；缺数据的 ${uni.missingData || 0} 只未参与计算。`
+            + uniNote) : null,
+          missingHint ? h('div', { className: 'sl-note', style: { color: 'var(--dsw-alias-state-warn-primary)', marginBottom: 4, lineHeight: 1.7 } },
+            '全市场标的池里缺数据的标的很多：先在对话里用 collect_history 补数据，或切到本地库。') : null,
+          job.state === 'failed' ? h('div', { className: 'sl-err' }, '选股失败：' + (job.error || '未知错误')) : null,
+          job.state === 'cancelled' ? h('div', { className: 'sl-note' }, '已停止' + (job.error ? '：' + job.error : '')) : null,
+          job.state === 'done' && job.error ? h('div', { className: 'sl-note' }, job.error) : null,
+          job.results && job.results.length
+            ? h('table', { className: 'sl-screen-table' },
+              h('thead', null, h('tr', null,
+                ...['代码', '名称', '命中次数', '最近命中日', '收盘', '涨跌'].map((c) => h('th', { key: c }, c))
+              )),
+              h('tbody', null, ...job.results.map((r) => h('tr', {
+                key: r.symbol, title: '点击切换到该标的',
+                onClick: () => onPickSymbol && onPickSymbol(r.symbol, r.name || r.symbol),
+              },
+                h('td', null, r.symbol),
+                h('td', null, r.name || '—'),
+                h('td', null, String(r.hitCount)),
+                h('td', null, r.lastHitDate || '—'),
+                h('td', null, fmt(r.close)),
+                h('td', { className: cls(r.changePct) }, fmtPct(r.changePct))
+              )))
+            )
+            : job.state === 'done'
+              ? h('div', { className: 'sl-note', style: { marginTop: 6 } },
+                '没有命中的标的（不代表全市场只有 0 只——见上面的缺数据数量）')
+              : null,
+          job.resultsTruncated ? h('div', { className: 'sl-note' }, '结果超过 500 条，仅显示前 500 条') : null
+        ) : null,
+        h('div', { className: 'sl-note', style: { marginTop: 8, color: 'var(--dsw-alias-label-tertiary)' } },
+          '历史统计筛选，不构成投资建议')
+      ) : null
+
       return h('div', null,
         h('div', { className: 'sl-toolbar', style: { marginBottom: 8, flexWrap: 'wrap' } },
           h('button', { className: 'sl-btn', onClick: () => setOpen(!open) }, open ? '取消导入' : '＋ 导入公式'),
@@ -4176,6 +4397,9 @@ window.__ModuleLoader__.load({
           importMsg ? h('div', { className: 'sl-note', style: { marginTop: 6, color: 'var(--dsw-alias-state-warn-primary)' } }, importMsg) : null
         ) : null,
 
+        // 公式选股区（点某个公式行的「选股」后出现）
+        screenArea,
+
         loading ? h('div', { className: 'sl-note' }, '加载公式…')
           : formulas.length === 0
             ? h('div', { className: 'sl-note' }, '还没有导入任何公式。点「导入公式」粘贴通达信源码，或在对话里让 AI 导入。')
@@ -4189,6 +4413,15 @@ window.__ModuleLoader__.load({
                     onClick: () => onToggle(f.id),
                     title: on ? '从图表移除' : '叠加到图表',
                   }, on ? '已在图上' : '画到图上'),
+                  h('button', {
+                    className: 'sl-btn' + (screenFormula && screenFormula.id === f.id ? ' sl-btn-on' : ''),
+                    disabled: !f.ok || running,
+                    title: f.ok ? (running ? '选股任务运行中' : '用该公式对一批标的选股') : '公式解析失败，无法用于选股',
+                    onClick: () => {
+                      setScreenFormula({ id: f.id, name: f.name })
+                      setJob(null); setScreenMsg(null); setPollErr(null)
+                    },
+                  }, '选股'),
                   h('span', { style: { fontWeight: 600 } }, f.name),
                   f.symbol ? h('span', { className: 'sl-code' }, f.symbol) : h('span', { className: 'sl-note' }, '通用'),
                   !f.ok ? h('span', { className: 'sl-up' }, '解析失败') : null,

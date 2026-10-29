@@ -160,9 +160,9 @@
 - [x] **窄窗口适配**：容器 < 880px 可收起为竖条，一键展开
 - [x] **纯函数化**：`clampPaneWidth()` 可离线测试边界，已导出 `__test` 供测试调用
 - [x] 右栏当前为占位（说明即将具备的能力），待 T6.3 填入真实 Chat
-- **测试**：client 从 28 项增至 43 项（历史数字，当时新增 15 项覆盖夹取边界与交互契约；当前值见第五节 2026-10-27 复核 —— client.test.mjs **310 项**）
+- **测试**：client 从 28 项增至 43 项（历史数字，当时新增 15 项覆盖夹取边界与交互契约；当前值见第五节 2026-10-29 复核 —— client.test.mjs **316 项**）
 
-## Phase 5 — 通达信公式兼容（新增，当前主线）
+## Phase 5 — 通达信公式兼容（✅ 已完成）
 
 ### T5.1 TDX 词法/语法解析器 ✅（已完成）
 - **Files**：`src/services/formula-service/tdx-parser.js`
@@ -228,10 +228,30 @@
   （`:2783`）**跨会话记住**；界面内粘贴导入调 `/formula/import`（`:2879`）；解析失败逐条列出、未来函数单独说明原因
 - 当前标的的计算结果摘要（线数、区间、信号命中次数与最近命中日）
 
-- [ ] **T5.7 选股**（用户选了"主图+副图+选股"，前两项已完成，此项待做）
-  - 需要：全市场标的池（东财 clist 可取）+ 批量求值（本地库 5000 标的 × 500 根，须分批与缓存）+ 结果页
-  - 信号提取接口已就绪（`signalsFrom`，含"非 0/1 条件线拒绝当信号"的安全判定）
-  - **开工前需评估耗时**：全市场 × 500 根的计算量不小，应给出进度与可中断设计，而不是让它卡住界面
+### T5.7 选股 ✅（2026-10-29 完成）
+
+> 用户选的三件（主图 + 副图 + 选股）全部做完，Phase 5 闭环完成。
+
+- **Goal**：把一条条件公式在标的池上批量求值，返回命中的标的
+- **Files**：`src/services/screen-service/index.js`（引擎）、`src/datasource/eastmoney.js`（`getStockUniverse`）、
+  `src/services/market-service/index.js`（标的池 + 本地库只读接口）、`src/index.js`（5 条路由）、
+  `src/tools/formula-tools.js`（`screen_formula` 工具）、`src/client.js`（「指标公式」tab 内的选股面板）
+- **开工前耗时评估（实测，500 根/标的）**：读盘 3.0 ms（冷）/ 0.4 ms（热）；求值 0.10–0.41 ms；
+  **全链路 0.7–0.9 ms/标的 → 5,000 只约 4 秒**。结论：不需要重型任务队列，但必须分批 + 可取消
+- **已实现**：
+  - **标的池**：`local`（本地库已落库）/ `watchlist`（自选，客户端传 symbols）/ `market`（东财全 A 股 **5,563 只**，
+    只评估本地有数据的）。缺数据**单独计数**并写进 `universe.note`，不静默跳过
+  - **分批 + 让出事件循环**：每批 40 个后 `setImmediate`；进度可轮询、任务可取消（`/formula/screen/cancel`）
+  - **结果缓存**：公式 + 参数 + 数据版本（文件大小+mtime 指纹）相同 → 复用；数据一变自动失效（`cached: true`）
+  - **安全判定**：复用 `signalsFrom`——最后一条输出线必须是 0/1，指标公式直接失败并说明原因
+  - **界面**：公式行「选股」→ 选池（本地/自选/全市场）+「只看最新一根」→ 进度条 + 停止 → 结果表
+    （代码/名称/命中次数/最近命中日/收盘/涨跌）→ 点行切标的；缺数据与免责声明常驻
+  - **AI 工具**：`screen_formula`（工具总数 30 → **31**）
+- **Acceptance**：裸跑 `collector.py status` 有数据的标的都能被选出；缺数据数量必须如实显示；
+  任务中途可取消且不留半成品；同一公式重复跑第二次命中 `cached`
+- **测试**：`tests/screen-service.test.mjs` **11 项**（命中/未命中/缺数据、latestOnly、非条件公式拒绝、未来函数拒绝、
+  缓存、取消、全市场池、自选池、空池、状态字段）；`tests/smoke-screen.mjs` **9 项真实冒烟**（真东财 5,563 只 + 真本地库）
+- **Deps**：T5.2/T5.3（求值器与未来函数检测）、T2.1（本地库）、T2.2b（本地库接入 MarketService）
 
 ---
 
@@ -254,8 +274,8 @@
   - 轮次上限（默认 6）到顶给出可执行建议
   - 错误 / 中断 / 取消 / 事件回调异常 全部有明确处理
 - `src/services/chat-service/index.js`：ChatService
-  - **工具白名单**：只暴露本插件自有的 **30 个工具**（`src/tools/` 六个模块注册：index 9 + research 4 +
-    watch 5 + quant 3 + formula 6 + **drawing 3**；D19 画线工具加入后由 27 增至 30）。`ctx.tools.schemas()` 会把 agent 自有的
+  - **工具白名单**：只暴露本插件自有的 **31 个工具**（`src/tools/` 六个模块注册：index 9 + research 4 +
+    watch 5 + quant 3 + formula 7 + **drawing 3**；公式 6→7 是加入了选股工具 `screen_formula`）。`ctx.tools.schemas()` 会把 agent 自有的
     read/write/bash 一并带出去——那些绝不该出现在聊天面板里
   - 系统提示词 = skill.md + 当前标的 + 面板硬约束（数字只能来自工具、不得改写统计量、
     区分事实与推断、不替用户下结论、附免责声明）
@@ -285,7 +305,7 @@
 - 完成时**先载入权威内容再清流式临时文本**（顺序反了会让答案闪一下消失）
 - 免责声明**常驻**在输入区下方（不是每条消息重复）；状态行如实显示驱动模型与可用工具数
 - 清空记录需二次确认
-- **测试**：client 74 → 97 项（历史数字，当时为 SSE 帧解析 12 项 + UI 契约 11 项；当前 client.test.mjs 为 **310 项**）；真实冒烟 `smoke-chat-ui.mjs` 15 项
+- **测试**：client 74 → 97 项（历史数字，当时为 SSE 帧解析 12 项 + UI 契约 11 项；当前 client.test.mjs 为 **316 项**）；真实冒烟 `smoke-chat-ui.mjs` 15 项
 
 ### T6.4 与工作台状态联动 🟡（部分完成）
 - 已完成：切换标的自动切换会话（右栏读的是当前标的的线程）
@@ -351,7 +371,7 @@
   - **点某根 K 线钉住读数**（点选 `:3182`、放大模式的 `'pickbar'` `:2059`）：显示 开/高/低/收/量 + 相对前一根涨跌幅（`:3395-3407`），并在图上画竖线标出（`:2734-2737`）
   - **不选任何工具时拖动 = 按横向范围框选放大**（`:1945`、`:3204-3212`；价格轴自动定、纵向不参与）；它与「选择」模式的框选多选**必须分开**，理由见 ARCHITECTURE §9.14
   - **已到数据起点时明确提示**（`:3444-3446`：`已到数据起点（共 N 根，最早 <日期>）`）
-  - **测试**：窗口纯函数与交互契约在 `tests/client.test.mjs`（当前 **310 项**）
+  - **测试**：窗口纯函数与交互契约在 `tests/client.test.mjs`（当前 **316 项**）
 - **历史深度（上游实测约束，详见 ARCHITECTURE §9.3）**：腾讯日线上限约 **800 根（≈3.2 年）**——我们的 800 与它一致，**不是我们卡住的**；
   请求 1500 根反而只返回 **641 根**（**静默降级、不报错**）；3000 根报 `param error`。
   更深历史的可行路径（周/月线、本地库累积、另接数据源）**均未实施**。
@@ -421,7 +441,7 @@ T0.1 → T0.2 → T1.1 → T1.2 → T1.3 → T1.4 → T1.5
 T6.0(布局骨架 + 可调宽右栏) ✅
         ├──→ T5.1(词法/语法) ✅ → T5.2(求值器) ✅ → T5.3(未来函数检测) ✅ → T5.4(导入通道) ✅
         │                                              └──→ T5.5(主图+副图) ✅ → T5.6(指标公式 tab) ✅
-        │                                                                          └──→ T5.7(选股) ⬜
+        │                                                                          └──→ T5.7(选股) ✅
         └──→ T6.1(Chat 数据层) ✅ → T6.2(LLM 桥+工具循环) ✅ → T6.3(右栏 Chat UI) ✅ → T6.4(状态联动) 🟡
                                                               └──→ T6.5(真实会话/工作区可见) ⬜（映射函数已写，但 `src/` 无任何引用 → **未接线**）
                                                               └──→ T7.1(线程绑定标的) ✅ → T7.2(摘要/上下文装配) ⬜ → T7.3(线程↔笔记) ⬜
@@ -452,10 +472,10 @@ T1.4(K线组件) ✅ ──→ T8.1(K 线可视窗口与交互) ✅ ──→ T8
   - TTL 缓存 + single-flight 4 项单测通过
   - 修复 4 个真实数据源 bug（见 README「已知的数据源坑」）
 - [x] **T1.5（提前完成部分）AI Tools + Context** ✅
-  - 8 个 Tools（含核心 `stock_research_snapshot`）9 项单测通过（当时值；现为 **30 个工具**、`tools.test.mjs` **11 项**）
+  - 8 个 Tools（含核心 `stock_research_snapshot`）9 项单测通过（当时值；现为 **31 个工具**、`tools.test.mjs` **11 项**）
   - StockContext provider
   - stock-lab skill（合规红线 + 研究方法论）
-  - Host 入口 + 10 条 HTTP 路由 16 项契约测试通过（当时值；现为 **56 条路由**、`host.test.mjs` **23 项**）
+  - Host 入口 + 10 条 HTTP 路由 16 项契约测试通过（当时值；现为 **61 条路由**、`host.test.mjs` **25 项**）
   - 架构铁律自动校验（只有 market-service 可 import datasource）
 - [x] **T1.3 工作台页面** ✅
   - `src/client.js`（484 行，当时值；现为 **4,495 行含空行 / 4,279 非空行**）：顶部指数栏、左侧自选股+搜索、K线（手写 SVG 蜡烛 + 成交量副图 + MA20）、行情明细、底部 新闻/财务/资金流 tabs
@@ -471,7 +491,7 @@ T1.4(K线组件) ✅ ──→ T8.1(K 线可视窗口与交互) ✅ ──→ T8
   - `main[key=stock-lab]` 与 `sidebar.panellist[id=stock-lab]` 均 `active: true`
 - [x] **AI Tools 真实调用验证** ✅（2026-10-23 本轮修复后）
   - 修补关键缺陷：插件 `inject` 缺 `tools`/`skills`，导致 8 个 AI Tools 此前**静默未注册**
-  - 修复后 `Tool.listTools` 可见全部 8 个 `stock_*`（2026-10-23 当时值；现为 **30 个工具**，见 T6.2）；skill 目录出现 `stock-lab`
+  - 修复后 `Tool.listTools` 可见全部 8 个 `stock_*`（2026-10-23 当时值；现为 **31 个工具**，见 T6.2）；skill 目录出现 `stock-lab`
   - `stock_research_snapshot(600519)` 真实返回：价 1335、涨 1.25%、成交额 76.77 亿、换手 0.46%、PE 20.49、PB 6.64、总市值 16689 亿、20 日超额 +13.33pp、主力净流入 2.83 亿、2026H1 营收 922.8 亿、**2 条代码判定异常**（量能 2.93σ、相对强度）
 
 - [x] **侧栏显示名改为「看盘助手」** ✅（2026-10-25）
@@ -610,52 +630,54 @@ T1.4(K线组件) ✅ ──→ T8.1(K 线可视窗口与交互) ✅ ──→ T8
 
 > 复跑环境：Node **v24.19.0**；Python **3.12.14**（DSH 运行时自带，路径 `~/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/python/`，
 > 探测顺序见 `src/services/quant-bridge/index.js:32-38`）。
-> 16 套 `tests/*.test.mjs` 均为离线测试，各自把数据写进隔离目录（系统临时目录或项目内 `.test-data/`，两者都已排除在版本库外）。
+> 17 套 `tests/*.test.mjs` 均为离线测试，各自把数据写进隔离目录（系统临时目录或项目内 `.test-data/`，两者都已排除在版本库外）。
 
 ```text
 JS（node tests/<name>.test.mjs）：
   market-service.test.mjs      →  19 passed（symbol 规范化 + 缓存 + 适配器契约）
   tools.test.mjs               →  11 passed（AI Tools 契约）
-  host.test.mjs                →  23 passed（契约 + 架构铁律 + 降级）
-  client.test.mjs              → 310 passed（bundle 契约 + 渲染 + K线窗口/画线/公式/量化/盯盘/笔记 UI）
+  host.test.mjs                →  25 passed（契约 + 架构铁律 + 降级 + 选股路由可调用）
+  client.test.mjs              → 316 passed（bundle 契约 + 渲染 + K线窗口/画线/公式（含选股面板）/量化/盯盘/笔记 UI）
   research.test.mjs            →  18 passed（研究库）
   research-tools.test.mjs      →  14 passed（研究工具）
   quant-bridge.test.mjs        →   7 passed（Node→Python 桥 + 真实执行）
   watch.test.mjs               →  39 passed（盯盘求值 + 存储 + 冷却 + digest）
   local-storage.test.mjs       →  25 passed（本地库读写 + 跨语言契约 + 数据根同构/空库回归）
   tdx.test.mjs                 →  61 passed（词法/语法/求值/未来函数）
-  formula-store.test.mjs       →  42 passed（公式存储 + 导入通道）
+  formula-store.test.mjs       →  43 passed（公式存储 + 导入通道）
+  screen-service.test.mjs      →  11 passed（公式选股：命中/缺数据/取消/缓存/标的池 + 缓存随数据失效）
   llm-loop.test.mjs            →  31 passed（多轮工具循环）
   chat-store.test.mjs          →  32 passed（线程/消息存储）
   chat-service.test.mjs        →  30 passed（ChatService + 工具白名单）
   chat-persistence.test.mjs    →  16 passed（会话映射 + 落库顺序）
   drawing-store.test.mjs       →  30 passed（画线存储 + 锚点规范 + data-root 回归）
-  ── 16 套小计 708
+  ── 17 套小计 728
   validate-resources.mjs       →  13 passed（展示资源 + 清单一致性）
-  ── JS 合计 **721**
+  ── JS 合计 **741**
 
 Python（python backend/tests/<name>.py）：
   test_storage.py              →  18 passed
   test_event_study.py          →   9 passed
   ── 小计 27
 
-合计 JS 721 + Python 27 = **748 项全通过**
+合计 JS 741 + Python 27 = **768 项全通过**
 ```
 
 **历史数字**：2026-10-23 的记录为「JS 189 + Python 19 = 208 项」；各任务条目里出现的
 client 20 / 28 / 43 / 65 / 74 → 97 均为**当时的逐阶段演进值**（已在相应条目标注"历史数字"），
 T6.1 / T6.2 条目里的 26 / 23 / 12 同理；
-当前 `client.test.mjs` 单项已达 **310 项**。**未逐条标注的 T1/T2/T4 阶段单测数量也都是当时值**——
+当前 `client.test.mjs` 单项已达 **316 项**。**未逐条标注的 T1/T2/T4 阶段单测数量也都是当时值**——
 本节复跑数字是唯一当前口径。
 
 > ⚠️ **可复现性注意事项：Python 缺失时总数会变小，而且不报错。**
 > `quant-bridge` 与 `local-storage` 中共有 **6 个子测试需要真实 Python 解释器**（探测顺序见上）。
 > 探测不到时它们**自动跳过、测试仍然全绿**，表现为 quant-bridge 4 项（真实 7）、local-storage 22 项（真实 25），
-> 合计退化为 **715 项**（721 − 6）。因此引用"全通过"时必须同时给出运行环境与 Python 是否可用，
-> 否则数字对不上——这也正是本轮从 712 修正为 736（后又增至 748）的原因。
+> 合计退化为 **735 项**（741 − 6）。因此引用"全通过"时必须同时给出运行环境与 Python 是否可用，
+> 否则数字对不上——这也正是本轮从 712 修正为 736（后又增至 768）的原因。
 
-**真实冒烟（需要网络 / 真实 GUI，单独跑，不并入上面的自动计数；本轮未复跑）**：
+**真实冒烟（需要网络 / 真实 GUI，单独跑，不并入上面的自动计数）**：
 `smoke-live.mjs`（腾讯行情）、`smoke-live2.mjs`（东财）、`smoke-tdx.mjs`（公式真实链路）、
+`smoke-screen.mjs`（公式选股：真东财 5,563 只标的池 + 真本地库，9 项检查；2026-10-29 实跑 9/9）、
 `smoke-chat.mjs`（真实 LLM 会话）、`smoke-chat-ui.mjs`（右栏 UI，15 项）。历史记录见各自文件。
 
 实测数据样例（2026-10-23 收盘后）：茅台 1335.00 (+1.25%)、沪深300 4105.33、两市成交额 19563 亿、涨跌家数 1853/437/67、茅台主力净流入 2.83 亿、PE 18.74、2026H1 营收 922.8 亿。

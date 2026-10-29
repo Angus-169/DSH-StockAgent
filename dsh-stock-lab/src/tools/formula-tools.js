@@ -39,7 +39,7 @@ function jsonSafe(value) {
   return out
 }
 
-export function registerFormulaTools(ctx, store, market) {
+export function registerFormulaTools(ctx, store, market, screen = null) {
   if (ctx.tools === undefined || !store) return 0
   let count = 0
   // 统一包一层 jsonSafe：工具返回值必须是 lossless JSON，
@@ -384,6 +384,62 @@ export function registerFormulaTools(ctx, store, market) {
           STD: '总体标准差（除以 N）',
           CROSS: '当根上穿为 1，首根不可能为上穿',
         },
+      }
+    },
+  })
+
+  reg({
+    name: 'screen_formula',
+    description: '用一条通达信**选股（条件）公式**在标的池上批量选股（ROADMAP T5.7）。'
+      + '只读本地历史库、不联网；缺数据的标的会如实计数，不会静默跳过。'
+      + 'universe：local=本地库已落库的全部标的；watchlist=传入的 symbols；market=全市场（只评估本地有数据的）。'
+      + '⚠️ 公式最后一条输出线必须是 0/1 条件（如 `XG:CROSS(MA(CLOSE,5),MA(CLOSE,20));`），'
+      + '写的是指标线（如 MA5:MA(C,5);）会被明确拒绝——避免把每条均线值都算成命中。'
+      + '返回命中的标的（命中次数 / 最近命中日 / 收盘价 / 当日涨跌幅），以及缺数据、失败的数量。'
+      + '这是历史统计筛选，不构成投资建议。',
+    parameters: {
+      type: 'object',
+      properties: {
+        formulaId: { type: 'string', description: '已导入公式的 id（与 name / text 三选一）' },
+        name: { type: 'string', description: '已导入公式的名字（与 id / text 三选一）' },
+        text: { type: 'string', description: '直接给公式源码（与 id / name 三选一）' },
+        universe: { type: 'string', enum: ['local', 'watchlist', 'market'], description: '标的池，默认 local' },
+        symbols: { type: 'array', items: { type: 'string' }, description: 'universe=watchlist 时的标的列表' },
+        latestOnly: { type: 'boolean', description: '只要"最新一根 K 线"满足条件（默认 false：历史上命中过就算）' },
+        limit: { type: 'number', description: '最多返回多少条命中（默认 50，上限 200）' },
+      },
+      additionalProperties: false,
+    },
+    async execute(args = {}) {
+      if (!screen) throw new Error('选股引擎不可用（初始化失败）')
+      const started = await screen.start({
+        formulaId: args.formulaId,
+        name: args.name,
+        text: args.text,
+        universe: args.universe || 'local',
+        symbols: Array.isArray(args.symbols) ? args.symbols : undefined,
+        latestOnly: args.latestOnly === true,
+        count: 500,
+      })
+      const done = await screen.waitFor(started.id, 120000)
+      if (!done) throw new Error('选股任务丢失')
+      if (done.state === 'failed') {
+        return { ok: false, error: done.error, formula: done.formula, universe: done.universe }
+      }
+      const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 200)
+      return {
+        ok: true,
+        state: done.state,
+        formula: done.formula,
+        universe: done.universe,
+        params: done.params,
+        progress: done.progress,
+        elapsedMs: done.elapsedMs,
+        cached: done.cached,
+        results: done.results.slice(0, limit),
+        resultsTruncated: done.results.length > limit,
+        note: done.universe?.note || null,
+        disclaimer: '历史统计筛选，不构成投资建议；缺数据的标的未参与计算，不代表它们不满足条件。',
       }
     },
   })

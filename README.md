@@ -35,7 +35,7 @@
 | 模块 | 作用 |
 |---|---|
 | **行情终端** | 工作台页面：指数栏、自选股、K 线、行业、财务、资金流、新闻 |
-| **AI 研究助手** | 30 个结构化工具 + 上下文感知，让 LLM 能拿到真实数据回答问题 |
+| **AI 研究助手** | 31 个结构化工具 + 上下文感知，让 LLM 能拿到真实数据回答问题 |
 | **研究台账** | Research Notebook：把判断固化成可复查、可推翻的记录，到期提醒复盘 |
 | **量化验证** | Event Study 等：把"感觉"变成有样本量、有效显著性判据的结论 |
 | **智能盯盘** | 9 种事件条件 + 与研究台账联动（假设到期自动提醒复盘） |
@@ -143,7 +143,7 @@ python backend/collectors/collector.py fetch-many SH600519 SZ300750 IDX000300 --
 | **财务** | 最近 12 期：营收/净利及同比、ROE、毛利率、负债率、EPS |
 | **资金流** | 今日与近 5 日主力净流入、超大单/大单/中单/小单分解 |
 | **所属行业** | 板块行情 + 成分股涨跌榜 → 判断"行业普跌"还是"个股独立行情" |
-| **指标公式** | 导入/粘贴 TDX 公式 → 主图叠加或副图 → 命中 K 线标 ▲；指标线会明说"不能当选股条件" |
+| **指标公式** | 导入/粘贴 TDX 公式 → 主图叠加或副图 → 命中 K 线标 ▲；指标线会明说"不能当选股条件"；**公式选股**：本地库/自选/全市场批量筛选，实时进度可取消，结果可点开 |
 | **量化验证** | 选事件条件与参数 → 跑 Event Study → 样本量/超额/胜率/t 值/显著性 → 一键存笔记 |
 | **智能盯盘** | 建规则（9 种条件）· 立即评估 · 触发记录（严重度分级 + 依据数值 + 确认） |
 | **研究笔记** | 统计条 + 新建表单 + 列表 + 内联复盘（四档结论） |
@@ -243,7 +243,7 @@ python backend/collectors/collector.py fetch-many SH600519 SZ300750 IDX000300 --
 
 ## 能力清单
 
-### 30 个 AI 工具
+### 31 个 AI 工具
 
 | 类别 | 工具 |
 |---|---|
@@ -251,7 +251,7 @@ python backend/collectors/collector.py fetch-many SH600519 SZ300750 IDX000300 --
 | 研究（4） | `save_research_note` · `list_research_notes` · `review_research_note` · `research_notebook_stats` |
 | 量化（3） | `run_event_study` · `collect_history` · `local_data_status` |
 | 盯盘（5） | `create_watch_rule` · `list_watch_rules` · `evaluate_watch_rules` · `list_watch_triggers` · `watch_digest` |
-| 通达信公式（6） | `import_formula` · `import_formula_dir` · `run_formula` · `list_formulas` · `delete_formula` · `tdx_capabilities` |
+| 通达信公式（7） | `import_formula` · `import_formula_dir` · `run_formula` · `list_formulas` · `delete_formula` · `tdx_capabilities` · **`screen_formula`**（公式选股） |
 | 图表标注（3） | `save_drawing` · `list_drawings` · `delete_drawing`（AI 可直接在图上画线并写 `reason`） |
 
 ### 通达信（TDX）公式引擎
@@ -300,7 +300,7 @@ moneyFlow · financials · news · anomalies（代码判定）
                         │ 禁止直连任何行情 API
 ┌───────────────────────▼──────────────────────────────┐
 │                 Host 插件层（Node.js）                │
-│  AI Tools 30 个 ──→ MarketService ──→ datasource/*    │
+│  AI Tools 31 个 ──→ MarketService ──→ datasource/*    │
 │  StockContext · Research · Watch · Quant 桥 · Formula │
 │  Drawing（画线存储）· Chat（自建 LLM 工具循环）        │
 └───────────────────────┬──────────────────────────────┘
@@ -346,7 +346,7 @@ DSH股票工作台/
     ├── skill.md                合规红线 + 研究方法论 + 盯盘用法（随插件分发）
     ├── README.md               插件实现细节（数据源坑、DSH 机制坑、测试清单）
     ├── src/
-    │   ├── index.js            Host 入口：56 条路由 + 工具注册装配
+    │   ├── index.js            Host 入口：61 条路由 + 工具注册装配
     │   ├── client.js           Client bundle：工作台页面与全部 UI
     │   ├── data-root.js        数据根目录解析（Node 侧；与 Python storage.py._home() 同构）
     │   ├── datasource/         单一数据源适配器（只被 market-service 引用）
@@ -359,6 +359,7 @@ DSH股票工作台/
     │   │   ├── research-service/   Research Notebook（SQLite + markdown）
     │   │   ├── watch-service/      盯盘引擎（规则 + 求值 + 触发 + 冷却）
     │   │   ├── formula-service/    ★ 通达信公式（解析/求值/未来函数检测/公式库）
+    │   │   ├── screen-service/     公式选股引擎（分批求值 + 进度可取消 + 结果缓存）
     │   │   ├── drawing-service/    图表画线存储（每标的一个 JSON）
     │   │   ├── chat-service/       右栏对话（数据层 + 自建 LLM 工具循环）
     │   │   └── quant-bridge/       Node → Python 子进程桥
@@ -369,7 +370,7 @@ DSH股票工作台/
     │   ├── collectors/         历史数据采集（经 MarketService 取数）
     │   ├── quant/              Event Study
     │   └── tests/
-    ├── tests/                  JS 测试（17 套离线 + 5 套真实冒烟）
+    ├── tests/                  JS 测试（17 套离线 + 6 套真实冒烟）
     │   └── drawing-store.test.mjs   画线存储（非法条目不静默修正）
     └── data/                   本地历史库（gitignore）
 ```
@@ -397,16 +398,17 @@ DSH股票工作台/
 ```bash
 cd dsh-stock-lab
 
-# Node 侧 · 16 套离线测试 + 1 套资源校验
-node tests/client.test.mjs            # 310 项  bundle 契约 + 渲染 + K线/画线/指标公式 UI
+# Node 侧 · 17 套离线测试 + 1 套资源校验
+node tests/client.test.mjs            # 316 项  bundle 契约 + 渲染 + K线/画线/指标公式 UI
 node tests/tdx.test.mjs               #  61 项  通达信解析 / 求值语义 / 未来函数 / 选股信号安全性
-node tests/formula-store.test.mjs     #  42 项  公式库 + 公式工具
+node tests/formula-store.test.mjs     #  43 项  公式库 + 公式工具
+node tests/screen-service.test.mjs    #  11 项  公式选股引擎（命中/缺数据/取消/缓存/标的池）
 node tests/watch.test.mjs             #  39 项  盯盘求值 / 冷却 / digest
 node tests/chat-store.test.mjs        #  32 项  Chat 数据层（线程 / 消息 / 落库顺序）
 node tests/llm-loop.test.mjs          #  31 项  自建工具循环
 node tests/drawing-store.test.mjs     #  30 项  画线存储（非法条目不静默修正）
 node tests/chat-service.test.mjs      #  30 项  Chat 服务装配
-node tests/host.test.mjs              #  23 项  装配契约 + 架构铁律 + 降级
+node tests/host.test.mjs              #  25 项  装配契约 + 架构铁律 + 降级 + 选股路由可调用
 node tests/local-storage.test.mjs     #  25 项  本地库读写 + **跨语言契约 + 数据根同构**（3 项需 Python）
 node tests/market-service.test.mjs    #  19 项  代码规范化 / 缓存 / single-flight
 node tests/research.test.mjs          #  18 项  研究台账生命周期
@@ -416,10 +418,11 @@ node tests/tools.test.mjs             #  11 项  工具计算逻辑 / 异常检�
 node tests/quant-bridge.test.mjs      #   7 项  Node→Python 桥（3 项需 Python）
 node tests/validate-resources.mjs     #  13 项  展示资源（locale / icon）与清单一致性
 
-# 5 套真实冒烟（打真实网络 / 真实 LLM，需起 dsh web；不计入上面的自动计数）
+# 6 套真实冒烟（打真实网络 / 真实 LLM，需起 dsh web；不计入上面的自动计数）
 node tests/smoke-live.mjs             # 真实网络（腾讯）+ 字段合理性断言
 node tests/smoke-live2.mjs            # 真实网络（东财）
 node tests/smoke-tdx.mjs              # TDX 引擎在真实 K 线上的冒烟
+node tests/smoke-screen.mjs           # 公式选股：真东财标的池（5,563 只）+ 真本地库（9 项检查）
 node tests/smoke-chat.mjs             # 右栏 Chat 真实链路（SSE 分段 / 多轮记忆 / 工具白名单）
 node tests/smoke-chat-ui.mjs          # 右栏 UI 的真实调用路径
 
@@ -428,9 +431,9 @@ python backend/tests/test_storage.py       # 18 项  存储层 + 数据根解析
 python backend/tests/test_event_study.py   #  9 项  事件研究
 ```
 
-**合计 721 项 JS 离线测试 + 27 项 Python = 748 项，2026-10-28 实测全部通过。**
+**合计 741 项 JS 离线测试 + 27 项 Python = 768 项，2026-10-29 实测全部通过。**
 
-⚠️ **这个总数取决于 Python 是否可见**：`quant-bridge` 与 `local-storage` 里有 6 项子测试要真的起 Python 解释器，**探测不到时它们会被自动跳过**，总数退化为 **715 项**（quant-bridge 7→4、local-storage 25→22）。插件按 `DSH_STOCK_LAB_PYTHON` → 包内 `.python-path` → `DSH_PYTHON` → **DSH 自带运行时**（`~/.dsh/dsh-runtimes/.../python.exe`）→ PATH 上的 `python` 依次找（见 `quant-bridge/index.js`）。坑在于：**宿主进程通常不把 python 放进 PATH**，所以第 4 步才是实际生效的那一步——这也是"同一份代码在两台机器上跑出不同测试数"的原因，值得记下来。
+⚠️ **这个总数取决于 Python 是否可见**：`quant-bridge` 与 `local-storage` 里有 6 项子测试要真的起 Python 解释器，**探测不到时它们会被自动跳过**，总数退化为 **735 项**（quant-bridge 7→4、local-storage 25→22）。插件按 `DSH_STOCK_LAB_PYTHON` → 包内 `.python-path` → `DSH_PYTHON` → **DSH 自带运行时**（`~/.dsh/dsh-runtimes/.../python.exe`）→ PATH 上的 `python` 依次找（见 `quant-bridge/index.js`）。坑在于：**宿主进程通常不把 python 放进 PATH**，所以第 4 步才是实际生效的那一步——这也是"同一份代码在两台机器上跑出不同测试数"的原因，值得记下来。
 
 ### 几个值得说明的测试设计
 
@@ -453,7 +456,7 @@ python backend/tests/test_event_study.py   #  9 项  事件研究
 | **Phase 2** AI Research | 🟡 约 90% | 台账✅ UI✅ 行业✅ 历史落库✅ 本地库接入✅ snapshot 长窗口✅ ／ 事件时间线⬜ |
 | **Phase 3** Quant Lab | 🧊 冻结（保留可用） | Event Study✅ Quant UI✅ ／ 回归·回测·walk-forward 不再排期 |
 | **Phase 4** Intelligent Watch | ✅ 基本完成 | 9 条件✅ 异常检测✅ 假设提醒✅ UI✅ 提醒通道✅ |
-| **Phase 5** 通达信公式 | 🟡 仅差选股 | 解析/求值/未来函数检测/导入通道✅ 主图叠加✅ 副图✅ 「指标公式」tab✅ ／ **T5.7 选股 ⬜** |
+| **Phase 5** 通达信公式 | ✅ 完成 | 解析/求值/未来函数检测/导入通道✅ 主图叠加✅ 副图✅「指标公式」tab✅ **T5.7 公式选股✅**（本地库/自选/全市场 + 进度可取消 + 结果表 + AI 工具） |
 | **Phase 6** 右栏 Chat | 🟡 主干完成 | T6.1 数据层✅ T6.2 LLM 桥 + 自建工具循环✅（含真实 LLM 冒烟）T6.3 右栏 UI✅ ／ T6.4 状态联动🟡（已能随标的切会话，只差"事实底座预置进提示词"）**T6.5 二层真实会话 ⬜** |
 | **Phase 7** 按标的对话线程 | 🟡 1/3 | T7.1 线程与标的绑定✅（落在这个插件自己的 chat-store 里）／ T7.2 摘要与上下文装配⬜ T7.3 线程↔笔记联动⬜ |
 | **Phase 8** 看盘体验（D18/D19） | ✅ 完成 | T8.1 K 线可视窗口与交互✅（缓冲区 800 + 窗口 `{count,end}`、指针锚定缩放、键鼠、点根钉住读数、横向框选放大、数据起点提示）／ T8.2 图表画线✅（4 种图形 + 吸附/预览/Ctrl+Z/多选删除/写说明/测幅 + 落盘 + 3 个 AI 工具 + 4 条路由） |
@@ -470,13 +473,13 @@ python backend/tests/test_event_study.py   #  9 项  事件研究
 
 | 类型 | 规模（**非空行口径**） |
 |---|---|
-| 设计文档 | 约 1,425 行（3 份：PLUGIN_REVIEW 137 + ARCHITECTURE 734 + ROADMAP 554；含空行约 1,827 行）。**这个数随文档更新就变**——改动这三份文档后请一并复核它，别让它像本轮那样过期 |
-| JS 源码 | 11,208 行 / 33 文件 |
+| 设计文档 | 约 1,463 行（3 份：PLUGIN_REVIEW 137 + ARCHITECTURE 752 + ROADMAP 574；含空行约 1,876 行）。**这个数随文档更新就变**——改动这三份文档后请一并复核它，别让它像本轮那样过期 |
+| JS 源码 | 12,010 行 / 34 文件 |
 | Python 后端 | 975 行 / 5 文件 |
-| 测试 | 6,508 行 / 23 文件 |
-| **合计**（不含设计文档） | **约 18,700 行** |
+| 测试 | 6,908 行 / 25 文件 |
+| **合计**（不含设计文档） | **约 19,900 行** |
 
-口径说明：**不含空行**（即过滤掉 `trim() === ''` 的行）。同一批文件按"含空行"算是 11,973 / 6,827 / 1,166 行，两个口径差别不小，写进文档时别混用。
+口径说明：**不含空行**（即过滤掉 `trim() === ''` 的行）。同一批文件按"含空行"算是 12,828 / 7,262 / 1,166 行，两个口径差别不小，写进文档时别混用。
 
 ## 设计文档索引
 
@@ -499,7 +502,7 @@ python backend/tests/test_event_study.py   #  9 项  事件研究
 | **空库顶掉真库** | "有数据"曾按「`meta.db`/`bars/` 存在」判断；只读命令 `collector.py status` 顺手建出**空 meta.db**，于是空目录把包内真库顶掉——界面本地 K 线为空、**画线全部消失**。已改为"有真实 `*.csv.gz`/`*.parquet` 才算数据"，并让只读路径不再建目录（2026-10-28） |
 | **统计边界** | 成交量 z-score 在历史标准差为 0 时（一字板）会算出无穷大，原实现返回 null 导致"极端异常"被静默吞掉 |
 | **画线的静默失效** | 拖动预览不跟随（画水平线读 `s.price`，草稿只带 `points` → NaN）；Ctrl+Z 不生效（`preventDefault()` 连带阻止了焦点交接）；`resolveDrawings` 只透传 label/reason，**丢掉 `color` 与 `ext`** → 改颜色不变色、趋势线预览是射线画出来却是线段 |
-| **测试数随环境变** | 有 6 项子测试依赖 Python 解释器，探不到就自动跳过（721↔715）。"测试少了"未必是代码坏了，先查 Python 路径 |
+| **测试数随环境变** | 有 6 项子测试依赖 Python 解释器，探不到就自动跳过（741↔735）。"测试少了"未必是代码坏了，先查 Python 路径 |
 
 ---
 

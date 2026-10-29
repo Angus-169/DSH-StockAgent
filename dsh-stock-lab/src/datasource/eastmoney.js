@@ -263,6 +263,74 @@ export async function getStockSector(input) {
 }
 
 /**
+ * 全 A 股标的池（东财 clist）。
+ *
+ * ⚠️ 实测：`pz` 的**实际上限是 100**（传 1000 / 6000 也只回 100 条），所以必须按 `total` 翻页。
+ * 全市场约 5,563 只 → 56 页；并发 6 页约 1–3 秒。调用方（MarketService）会缓存 1 小时。
+ *
+ * 板块范围：深A(m:0+t:6) / 创业板(m:0+t:80) / 沪A(m:1+t:2) / 科创板(m:1+t:23)。
+ *
+ * @returns {{total:number, fetched:number, pages:number, partial:boolean,
+ *            symbols:Array<{symbol,code,name,market}>, source:string, fetchedAt:string}}
+ */
+export async function getStockUniverse(opts = {}) {
+  const pageSize = 100
+  const concurrency = Math.min(Math.max(Number(opts.concurrency) || 6, 1), 10)
+  const base = 'https://push2.eastmoney.com/api/qt/clist/get'
+  const fs = 'm:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23'
+  const fields = 'f12,f13,f14'
+  const pageUrl = (pn) => `${base}?pn=${pn}&pz=${pageSize}&po=0&np=1&fltt=2&invt=2&fid=f12`
+    + `&fs=${encodeURIComponent(fs)}&fields=${fields}`
+
+  const first = await getJson(pageUrl(1))
+  const total = Number(first?.data?.total) || 0
+  const pages = Math.max(1, Math.ceil(total / pageSize))
+  const rows = [...(first?.data?.diff || [])]
+
+  let next = 2
+  let failedPages = 0
+  const worker = async () => {
+    for (;;) {
+      const pn = next++
+      if (pn > pages) return
+      try {
+        const j = await getJson(pageUrl(pn))
+        const diff = j?.data?.diff
+        if (Array.isArray(diff)) rows.push(...diff)
+        else failedPages++
+      } catch {
+        failedPages++
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(pages - 1, 1)) }, worker))
+
+  const seen = new Set()
+  const symbols = []
+  for (const r of rows) {
+    const code = String(r?.f12 || '')
+    if (!/^\d{6}$/.test(code)) continue
+    const market = r?.f13 === 1 ? 'SH' : 'SZ'
+    const symbol = market + code
+    if (seen.has(symbol)) continue
+    seen.add(symbol)
+    // 东财名字里偶有全角空格（如 "万  科Ａ"），压掉
+    symbols.push({ symbol, code, name: String(r?.f14 || '').replace(/\s+/g, ''), market })
+  }
+
+  return {
+    total,
+    fetched: symbols.length,
+    pages,
+    partial: failedPages > 0 || symbols.length < total,
+    failedPages,
+    symbols,
+    source: 'eastmoney',
+    fetchedAt: new Date().toISOString(),
+  }
+}
+
+/**
  * 新闻检索（东财站内搜索：媒体新闻 + 公告）。
  * @returns {Array<{time,title,url,source}>}
  */
