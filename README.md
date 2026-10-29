@@ -338,6 +338,7 @@ DSH股票工作台/
 ├── PLUGIN_REVIEW.md        Phase 0：5 个候选插件的源码级评审与 fork 决策
 ├── ARCHITECTURE.md         分层架构、MarketService 契约、统一 schema、D18/D19 决策记录
 ├── ROADMAP.md              Phase 0–8 拆解 + 验收标准 + 当前进度
+├── PRODUCT_THESIS.md       产品定位草稿（判断习题册，待细化；不作为排期依据）
 ├── research/               被评审的 5 个插件源码（只读参考，不参与构建）
 │
 └── dsh-stock-lab/          实际交付的插件
@@ -473,7 +474,7 @@ python backend/tests/test_event_study.py   #  9 项  事件研究
 
 | 类型 | 规模（**非空行口径**） |
 |---|---|
-| 设计文档 | 约 1,463 行（3 份：PLUGIN_REVIEW 137 + ARCHITECTURE 752 + ROADMAP 574；含空行约 1,876 行）。**这个数随文档更新就变**——改动这三份文档后请一并复核它，别让它像本轮那样过期 |
+| 设计文档 | 约 1,543 行（4 份：PLUGIN_REVIEW 137 + ARCHITECTURE 752 + ROADMAP 579 + PRODUCT_THESIS 75；含空行约 1,981 行）。**这个数随文档更新就变**——改动这些文档后请一并复核它，别让它像本轮那样过期 |
 | JS 源码 | 12,010 行 / 34 文件 |
 | Python 后端 | 975 行 / 5 文件 |
 | 测试 | 6,908 行 / 25 文件 |
@@ -489,6 +490,7 @@ python backend/tests/test_event_study.py   #  9 项  事件研究
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | 分层架构、MarketService 契约、统一数据 schema、UI Context 设计、工具设计、设计决策记录（§9 含 K 线交互 D18、画线 D19 的取舍推导） |
 | [`ROADMAP.md`](ROADMAP.md) | Phase 0–8 的完整任务拆解（Goal / Input / Output / Files / Acceptance / Deps）+ 逐项进度（D18/D19 记为 Phase 8 的 T8.1/T8.2） |
 | [`dsh-stock-lab/README.md`](dsh-stock-lab/README.md) | 插件实现细节：数据源字段坑、DSH 插件机制坑、测试清单、安装与验证方法 |
+| [`PRODUCT_THESIS.md`](PRODUCT_THESIS.md) | **产品定位草稿（待细化）**：「判断习题册」——用真实行情当题库反复练判断、AI 出题/批改、成绩单记录准确率。**未定稿，不作为排期依据** |
 
 ## 已知的坑
 
